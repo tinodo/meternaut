@@ -149,6 +149,7 @@ class FromTheAnswerToTheChange(unittest.TestCase):
         ways = facts[proposals.KEY]
         self.assertEqual(ways["set"], [{"path": "scaleUnits", "from": 4, "to": 2}])
         self.assertEqual([(way["title"], "lowUsd" in way, way.get("estimate", False)) for way in ways["others"]], [("Use the free tier", True, True), ("Remove it", False, False)])
+        self.assertEqual([way.get("why") for way in ways["others"]], [None, "lines"], "the removal names a bill line that no tool showed: it keeps the word of why it has no figure")
         priced = pricing.saved(facts)
         self.assertEqual((round(priced.low, 2), round(priced.bill, 2), priced.level), (100.8, 201.6, "Scenario"))
         self.assertEqual([note for note in self.notes if "dropped" in note], [])
@@ -179,7 +180,8 @@ class FromTheAnswerToTheChange(unittest.TestCase):
         self.assertIn("proposal", listed, "the word of the finding's own proposal (change) is a typed fact, listed in the Details where it was")
         self.assertNotIn(proposals.KEY, listed, "and the ways, which the page says in its own words, are not")
         saves = cells(shown["page"])
-        self.assertEqual(saves[saves.index("Saves a month") + 3::3][:2], ["about $161 to $192, the AI's estimate", "Not priced"], "an estimate says so in its cell")
+        # The removal names a bill line that no tool showed (m9), so it has no figure and keeps the reason that code gave, and the cell says it: it used to say "Not priced" and no more.
+        self.assertEqual(saves[saves.index("Saves a month") + 3::3][:2], ["about $161 to $192, the AI's estimate", f"Not priced {proposals.not_priced('lines')}"], "an estimate says so in its cell")
         self.assertIn("A saving that is the AI's estimate rests on a share of the cost that the AI assumed, and Meternaut did not check that share.", page)
         self.assertNotIn("capacity units", page, "the words of the kind are those of its own property")
         table = cells(shown["page"])

@@ -24,7 +24,7 @@ from typing import Mapping, Sequence
 from . import cardcheck, cardlinks
 from .brief import (ADVISOR_SHORT, ASKED_CHARS, CHECK_FIRST_SHORT, HEADS_UP, MONTH_NAMES, PAUSED_ADVICE, PAUSED_CHANGES, RISK_CHARS, TWO_PEOPLE, UNDO_CHARS, WHY_APPROVER, Brief, called_of, footer_line,
                     others_line, parse_time, plain,
-                    plain_sentences, shown_facts)
+                    plain_sentences, shown_facts, ways_notes)
 from .stake import NOTE_CHARS, chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
@@ -144,8 +144,11 @@ def _facts(brief: Brief) -> list[dict]:
 
 
 def _others(brief: Brief) -> list[dict]:
-    """One line about the other ways to save that the finding proposes: how many the AI named. The page has them, with what each saves and gives up, and they are information: no button."""
-    return [_block("others", md(others_line(brief), 300))] if brief.others else []
+    """One line about the other ways to save that the finding proposes: how many the AI named. The page has them, with what each saves and gives up, and they are information: no button. When code knows
+    why a way has no figure, or how many charges that the AI named a figure leaves out, a second line of its own says it (brief.ways_notes): a block is cut at 300 characters, and a test holds the longest
+    of these lines under that, so that the reason is never what is cut."""
+    notes = ways_notes(brief.others)
+    return [_block("others", md(others_line(brief), 300)), *([_block("others-notes", md(notes, 300), isSubtle=True)] if notes else [])] if brief.others else []
 
 
 def _advisor(brief: Brief) -> list[dict]:

@@ -8,8 +8,11 @@ call to Azure. A reader never raises: what is not in the shape is left out.
 The shape, under facts[KEY]:
   {"set":    [{"path": "<a key path exactly as the tools returned it>", "from": <its value as the tools returned it>, "to": <the value to set>}],            at most MAX_SETTINGS
    "others": [{"title": "<plain words>", "givesUp": "<plain words>", "action": "<an action of cases/pricing.py>", "inPlace": <true, false or absent>,
-               "lowUsd": <a number>, "highUsd": <a number>, "estimate": <true or absent>}]}                                                               at most MAX_OTHERS
-An estimate is a way whose saving rests on a share that the AI states and nothing checks (the form `assumed`): the pages say so. `countlike` is the one gate on which property may be lowered.
+               "lowUsd": <a number>, "highUsd": <a number>, "estimate": <true or absent>, "skipped": <a whole number above 0 or absent>,
+               "why": "<a word of NOT_PRICED, for a way that has no figure, or absent>"}]}                                                              at most MAX_OTHERS
+An estimate is a way whose saving rests on a share that the AI states and nothing checks (the form `assumed`): the pages say so. `skipped` is how many of the charges that the AI named a figure does not
+count, and `why` is the word of cases/pricing.py WHY that code stopped at for a way that has no figure: a number and a closed word that code made, never a word of the AI's. `countlike` is the one gate on
+which property may be lowered.
 """
 from __future__ import annotations
 
@@ -59,6 +62,22 @@ CANNOT = {
     "unsettled": "The AI reviewers did not agree on this finding, so a person decides first whether it is worth a change.",
 }
 CANNOT_KEY = "cannotChange"
+# Why a way has no figure, for a way, by the word of cases/pricing.py WHY that code stopped at (`dearer` is not here: such a way is dropped, WHY["other"]). Each is a clause that follows "because" and, with a
+# capital and a full stop, a whole sentence of its own (`not_priced`). They say what code found, never a word of the AI's, and a test holds the keys to those of the pricing: a reason that it gains needs words.
+NOT_PRICED = {
+    "alternative": "Meternaut found no price in the list for what the AI names",
+    "units": "the price that the AI names is for another unit than this charge, so the two cannot be compared",
+    "listed": "Meternaut does not know the list price of the charge that it would replace",
+    "quantity": "this charge has no cost per unit to price the alternative by",
+    "remains": "the AI did not say what would remain in a form that Meternaut can check",
+    "none": "the AI did not say which charges on the bill it would change",
+    "lines": f"Meternaut did not find the charges that the AI named for this resource, or they have fewer than {pricing.FEWEST} days of cost",
+    "nothing": f"the charges that the AI named cost nothing in the last {pricing.WEEK} days",
+    "credit": "what the resource gets back on its bill is as much as the charges that the AI named cost",
+    "range": "the number that the AI proposes is outside the range that Microsoft's reference page gives for the setting",
+    "currency": "the cost of this resource is not in US dollars",
+}
+MOST_SKIPPED = pricing.MAX_EFFECTS * pricing.MAX_METERS  # the most charges that an answer can name for a way
 
 
 @dataclass(frozen=True)
@@ -73,7 +92,8 @@ class Setting:
 @dataclass(frozen=True)
 class Other:
     """Another way to save on the same resource, which a person may take instead. `in_place` says whether Azure changes the resource where it is (True), or only by making it again (False).
-    `estimate` is True when its saving rests on a share that the AI states and nothing checks."""
+    `estimate` is True when its saving rests on a share that the AI states and nothing checks. `why` is the word of NOT_PRICED that says why it has no figure ("" for a way that has one, and for a way that
+    was kept before code kept the word), and `skipped` how many of the charges that the AI named its figure does not count (0 for none, and for a way kept before code kept the number)."""
 
     title: str
     gives_up: str
@@ -82,6 +102,8 @@ class Other:
     low: float | None
     high: float | None
     estimate: bool = False
+    why: str = ""
+    skipped: int = 0
 
 
 def _scalar(value: object) -> bool | int | float | str | None:
@@ -116,16 +138,33 @@ def settings(facts: object) -> tuple[Setting, ...]:
     return tuple(out[:MAX_SETTINGS])
 
 
+def _charges(value: object) -> int:
+    """How many charges a way leaves out, as stored: a whole number from 1 up to the most that an answer can name, else 0 (a flag, a float and a text are no number of charges)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 < value <= MOST_SKIPPED else 0
+
+
 def others(facts: object) -> tuple[Other, ...]:
-    """The other ways to save that the facts of a case hold, in order: an entry without a title is left out."""
+    """The other ways to save that the facts of a case hold, in order: an entry without a title is left out. The word of why a way has no figure is read only when it is one of NOT_PRICED, and the number of
+    charges that its figure leaves out only when it is a whole number above 0: nothing else of an entry reaches a sentence of Meternaut's."""
     out = []
     for item in _entries(facts, "others"):
         if not isinstance(item, Mapping) or not _text(item.get("title"), MAX_TITLE):
             continue
-        place = item.get("inPlace")
+        place, why = item.get("inPlace"), item.get("why")
         out.append(Other(_text(item.get("title"), MAX_TITLE), _text(item.get("givesUp"), MAX_GIVES_UP), _text(item.get("action"), 20), place if isinstance(place, bool) else None,
-                         _money(item.get("lowUsd")), _money(item.get("highUsd")), item.get("estimate") is True))
+                         _money(item.get("lowUsd")), _money(item.get("highUsd")), item.get("estimate") is True, why if isinstance(why, str) and why in NOT_PRICED else "", _charges(item.get("skipped"))))
     return tuple(out[:MAX_OTHERS])
+
+
+def not_priced(why: object) -> str:
+    """The sentence that says why a way has no figure, from the word that code kept ("" for a word that is not one of NOT_PRICED): the clause with a capital and a full stop."""
+    clause = NOT_PRICED.get(why, "") if isinstance(why, str) else ""
+    return f"{clause[:1].upper()}{clause[1:]}." if clause else ""
+
+
+def left_out(skipped: int, where: str = "this figure") -> str:
+    """The sentence that says how many of the charges that the AI named a figure of a way does not count (one charge, or the number of them), and in which figure: "this figure" in the cell of the way."""
+    return f"{'One charge' if skipped == 1 else f'{skipped} charges'} that the AI named {'is' if skipped == 1 else 'are'} not counted in {where}."
 
 
 def cannot(preconditions: object) -> str:
@@ -269,7 +308,8 @@ def check(change: pricing.Change | None, proposal: str, handles: Sequence[str], 
     """What code keeps of the settings and the other ways that the change of a finding states. `proposal` is the finding's, `handles` the resources that it covers, `evidence` what the tools showed
     for each handle (Toolbox.evidence) and `price` the price of a change from the bill (cases/pricing.py price, for those handles). An entry that fails a rule is dropped by itself and counted, and
     the finding is never dropped for it. Settings are kept only for a finding that proposes a change by the action reduce, and other ways only for a finding of one resource. A way that cannot be
-    priced is kept with no figure, and no way ever becomes a setting. A way that code did price and found to be no saving (`no_saving`) is dropped: it is no way that was kept, so it takes no place
+    priced is kept with no figure and with the word that code stopped at (`why`, when the price gave one), a way whose figure leaves out charges that the AI named keeps how many (`skipped`), and no way ever
+    becomes a setting. A way that code did price and found to be no saving (`no_saving`) is dropped: it is no way that was kept, so it takes no place
     of the limit, and neither its change nor its title stops a later way. A resource that had a setting dropped for lying outside the documented range is in `ranged`: the caller holds back its figure."""
     dropped: Counter = Counter()
     ways: dict[str, dict] = {}
@@ -306,6 +346,10 @@ def check(change: pricing.Change | None, proposal: str, handles: Sequence[str], 
             row = priced.rows.get(handles[0])
             if row is not None:
                 entry |= {"lowUsd": row.low, "highUsd": row.high, **({"estimate": True} if row.form in ("assumed", "mixed") else {})}  # these forms rest on a share that only the AI states
+                if row.skipped > 0:
+                    entry["skipped"] = row.skipped  # how many of the charges that the AI named the figure does not count
+            elif (why := priced.why.get(handles[0])) in NOT_PRICED:
+                entry["why"] = why  # the word that code stopped at: a price that says nothing (no bill was read) gives none
             kept.append(entry)
             taken.append((option.action, option.effects))
             titles.add(entry["title"].casefold())
@@ -333,7 +377,8 @@ def note_of(checked: Checked) -> str:
 def view(items: Iterable[tuple[str, object]]) -> dict:
     """What the Skeptic is shown of the proposals of a finding, from the facts of the cases of its resources (`items`: a handle and the facts of its case): the settings, each with its handle, the
     property as the tools showed it and the value now and after, and the other ways, each with its title, what it gives up (the Investigator's words), the action, whether Azure changes the resource
-    where it is, what code priced it at a month and whether that is an estimate. A key is there only when it has entries."""
+    where it is, what code priced it at a month and whether that is an estimate. A key is there only when it has entries. `why` and `skipped` of a way are not shown: the instruction of the Skeptic does not
+    describe them."""
     lowered, ways = [], []
     for handle, facts in items:
         lowered += [{"handle": handle, "property": item.path, "from": item.now, "to": item.to} for item in settings(facts)]
