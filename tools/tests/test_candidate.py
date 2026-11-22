@@ -178,7 +178,8 @@ class TheCandidateFiles(unittest.TestCase):
         self.assertEqual((fourth[:before], fourth[len(fourth) - tail:]), (third[:before], third[after:]), "nothing outside the paragraph differs from the third candidate")
         paragraph = fourth[before:len(fourth) - tail]
         self.assertIn("State in others each one that would make the bill smaller", paragraph)
-        self.assertIn("and leave out one that costs as much as what the bill shows now, or more.", paragraph)
+        self.assertIn("and leave out one that costs as much as the charges that it replaces, or more.", paragraph)
+        self.assertNotIn("what the bill shows now", paragraph, "the words can mean the whole bill, and the app's rule compares one charge with the new price")
         self.assertNotIn("whether or not it can be priced", fourth, "the third candidate asked for an option whether or not it could be priced: a way that code cannot price is kept with no figure, and the fourth asks for no such way")
         self.assertIn("whether or not it can be priced", third)
         self.assertIn("the action switch for a meter that the other option has no counterpart for", fourth, "the sentence on the forms is the third candidate's")
