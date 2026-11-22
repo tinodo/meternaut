@@ -110,6 +110,13 @@ class TheWindowOfTheCostLines(unittest.TestCase):
 class ScenarioA(unittest.TestCase):
     """A resized machine that still runs has no cost line yet, and the check counted that as a cost of zero."""
 
+    def test_an_amount_of_money_in_the_note_of_the_cost_check_says_its_dollars(self):
+        # The notes said "1.5 a day against 2 before" and "cost lines of 12.5 still exist": a number without its unit.
+        self.assertEqual(per_day_check(60.0, 3.0, 2, "the machine")[1], "Confirmed: the cost lines of the machine after the day of the change are lower: $1.50 a day against $2.00 before.")
+        self.assertEqual(per_day_check(60.0, 140.0, 2, "the machine")[1], "Not confirmed: the cost lines of the machine after the day of the change are $70.00 a day against $2.00 before.")
+        self.assertEqual(registry.get("delete-disk").cost_check(7.17, 12.5, 2)[1], "Not confirmed: cost lines of $12.50 still exist after the day of the change.")
+        self.assertEqual(registry.get("delete-disk").cost_check(7.17, 0, 2)[1], "Confirmed: no cost lines for this resource after the day of the change.")
+
     def test_the_family_never_confirms_a_saving_from_a_total_of_nothing(self):
         confirmed, note, saved = per_day_check(31.10, 0.0, 1, "the machine")
         self.assertEqual((confirmed, saved), (False, None))

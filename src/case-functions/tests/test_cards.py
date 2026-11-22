@@ -437,8 +437,8 @@ class TheFirstContactCard(unittest.TestCase):
         self.assertEqual({a["url"] for a in actions_of(card)}, {f"{BASE}/"})
         self.assertEqual([a["type"] for a in actions_of(card)], ["Action.OpenUrl"])
         self.assertEqual(ids["hello"]["text"], "Hello Maya. I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to you when a decision waits for you.")
-        self.assertEqual(ids["rules"]["text"], "I change nothing myself. You answer a request with the buttons on its card. A button opens a page that sends your answer, "
-                                               "and a change to Azure runs with your own Azure rights.")
+        self.assertEqual(ids["rules"]["text"], "I never change anything on my own. You answer a request with the buttons on its card. A button opens a page that sends your answer, "
+                                               "and a change to Azure runs with your own Azure rights.", "said once, before the first request, which may be advice or a change that Meternaut makes after the approval: true of both")
         self.assertNotIn("cannot answer", json.dumps(card), "a card can be answered now")
         self.assertEqual(re.findall(r"(?i)\bsign(?:s|ed|ing)?[ -]in\b", json.dumps(card)), [])
         self.assertEqual(ids["ai-footer"]["text"], "An AI wrote this, and a person approves every change. You are on my list of people. Maya (maya@example.com) answers for Meternaut.")

@@ -188,11 +188,12 @@ class ThePastAndItsLine(unittest.TestCase):
         self.assertEqual(learning.past_line({"n": 6, "approved": 4, "enough": True, "ratio": 1.0, "boomerangs": 2}),
                          "Of 6 past cases like this, 4 were approved. Savings came in at 100 percent of the estimate. 2 were undone within weeks.")
 
-    def test_below_the_smallest_sample_it_says_that_there_is_no_history_yet_and_a_case_with_no_record_of_it_says_nothing(self):
-        self.assertEqual(learning.past_line({"n": 2, "approved": 2, "enough": False}), "There is no history of cases like this yet.")
-        self.assertEqual(learning.past_line({"n": 0, "approved": 0, "enough": False}), "There is no history of cases like this yet.")
+    def test_below_the_smallest_sample_there_is_no_line_because_no_history_is_nothing_to_say_and_so_is_a_case_with_no_record_of_it(self):
+        # This said "There is no history of cases like this yet." for every request without a past: a sentence made from nothing, which fitted any request. Nothing to say is said by saying nothing.
+        for few in ({"n": 2, "approved": 2, "enough": False}, {"n": 0, "approved": 0, "enough": False}):
+            self.assertEqual(learning.past_line(few), "", few)
         for odd in ({"n": "4", "approved": 3, "enough": True}, {"n": 4, "approved": 5, "enough": True}, {"n": True, "approved": 1, "enough": True}, {"approved": 1}, {"n": 4, "approved": 3}):
-            self.assertEqual(learning.past_line(odd), "There is no history of cases like this yet.", odd)
+            self.assertEqual(learning.past_line(odd), "", odd)
         for none in (None, "", [], 5):
             self.assertEqual(learning.past_line(none), "")
 

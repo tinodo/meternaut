@@ -252,13 +252,8 @@ def _page(subject: str, blocks: list[object]) -> str:
 
 # ---- what the letters say -------------------------------------------------------------------------------------------------------------------------
 
-def _read(value: str) -> str:
-    """A measurement says on how many of its days it had a value only when that is not every one of them (brief.covered): a zero over 30 days may be a zero of 20."""
-    return brief_mod.covered(value)
-
-
 def _fact_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
-    return tuple((_data(f.label, 60), _data(_read(f.value), 120)) for f in brief_mod.shown_facts(brief.facts, MAX_FACTS))
+    return tuple((_data(f.label, 60), _data(f.value, 120)) for f in brief_mod.shown_facts(brief.facts, MAX_FACTS))
 
 
 def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
@@ -268,21 +263,24 @@ def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
     owner = ("Whose is it", _data(brief.owner.text, 200))
     if brief.kind == "advice":
         risk = brief.risk.text
-        return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, brief_mod.RISK_CHARS)),) if brief.risk.acting else ()))
+        return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, brief_mod.RISK_CHARS)),) if brief.risk.acting and risk else ()))
     two = f" {brief_mod.TWO_PEOPLE}" if brief.kind == "change" and brief.two_people else ""
     undo = (("Undo", _data(brief.undo.short or brief.undo.how, brief_mod.UNDO_CHARS)),) if brief.undo.reversible else ()  # a change that cannot be undone says so in its chips; a command is never cut in half, and no undo of a family is cut at all
     said = brief.change_short or brief.change  # the short words of a family keep the sentence that says that nothing else is promised
+    doubt = brief_mod.doubt_line(brief)  # what the second AI doubts, said as advice says it, under what could go wrong
+    risk = _data(brief.risk.short, brief_mod.RISK_CHARS) if brief.risk.short else _data(plain_sentences(brief.risk.text, 200), 200)  # a family that has short words keeps in them what was measured: a cut by length never drops it
     return (owner, ("If you approve", _data(plain_sentences(said, 200), 200) + ("" if "own permissions" in said else " It runs with your own permissions.") + two), *undo,
-            ("What could go wrong", _data(plain_sentences(brief.risk.text, 200), 200)))
+            ("What could go wrong", risk + (f" {_data(doubt, brief_mod.RISK_CHARS)}" if doubt else "")))
 
 
 def first_contact_letter(person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), plan_id: str | None = None) -> Letter:
     """The first letter to a person, in four sentences: who writes and what for, what I do and do not do, and where to pause or stop the letters. Its one link is the page
-    of the first request that waits for the person (the start page when it is not sent for one)."""
+    of the first request that waits for the person (the start page when it is not sent for one). It is said once, at the first request, which may be advice or a change that Meternaut makes after the
+    person approves it, so what it says of changes is true of both: nothing is changed on Meternaut's own, and a change runs with the person's own Azure rights."""
     base = _base(base_url)
     doc = _Doc("An AI assistant for Azure costs will write to you")
     doc.paragraph(f"Hello {_data(person.name, 80)}. I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to you when a decision waits for you.")
-    doc.paragraph("I change nothing myself. You decide on a web page, and a change runs with your own Azure rights.")
+    doc.paragraph("I never change anything on my own. You decide on a web page, and a change runs with your own Azure rights.")
     doc.paragraph("You can pause or stop my letters under Settings on that page.")
     doc.button("See the first decision" if plan_id else "Open the web page", _plan_url(base, plan_id) if plan_id else f"{base}/")
     doc.footer(f"You are on my list of people{_as(person)}.", contacts, person)
@@ -325,7 +323,7 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
             doc.paragraph(notes)  # why a way has no figure and how many things a figure leaves out: a letter has no table, and these are the words of its cells
     if brief.heads_up:
         doc.paragraph(_heads_up(brief))
-    for line in (brief.past if brief.past != brief_mod.NO_HISTORY else "", brief.access):
+    for line in (brief.past, brief.access):
         if line:
             doc.paragraph(_data(line, 240))
     if brief.by_code:

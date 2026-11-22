@@ -38,7 +38,8 @@ STATUS = {"declined": 200, "asked": 200, "not_mine": 200, "later": 200, "acknowl
           "stopped": 409, "azure_refused": 403, "failed": 502, "signin_failed": 400, "step_up_failed": 400, "refused_code": 409, "refused_state": 409, "refused_role": 403,
           "refused_paused": 409, "expired": 410, "duplicate": 409, "error": 500}
 WHY = "you answered a request on this page"
-CONFIRM_WHY = "you asked to approve a change that cannot be undone"
+CONFIRM_WHY = "you asked to approve a change that cannot be undone"  # the page that asks twice before a delete
+CONFIRM_WHY_REAL = "you asked to approve a change to a real resource, and every change to a real resource asks once more"  # and before a change that can be undone but changes a real resource
 ANSWERS = ("approve", "decline", "ask", "not_mine", "later", "confirm")
 HELD_WHERE = 'The finding stays held back until nothing holds it back any more. You find it under "Held back" on the Decisions page, and on the page Savings found.'
 # What kind of news each result is, for the box that the page of the result puts its lines in: a change made is a success, an answer recorded or a change that was not needed is information, a
@@ -342,12 +343,13 @@ def confirm_page(ctx: Ctx, plan: PlanRecord, brief: Brief, code: str, nonce: str
     place = f" in resource group {brief.where.group}" if brief.where.group else ""
     named = f", subscription {brief.where.subscription_name or brief.where.subscription}" if (brief.where.subscription_name or brief.where.subscription) else ""
     real = brief.undo.reversible and brief.confirm  # a change that can be undone and changes a real resource: the words say what is true, and the old words stay for what cannot be undone
+    # The lead says that a real resource changes, so the notice under it is titled by what it holds (the risk) and does not say it again; the line of the footer says why this person sees the page, and it is true of each kind.
     body = join([head("Confirm this change", "This changes a real resource. Nothing is changed until you confirm here." if real else "This change cannot be undone. Nothing is changed until you confirm here."),
                  paragraph(fmt("<strong>{title}</strong>", title=title if title.endswith((".", "!", "?")) else f"{title}.")),  # the title has its own line and ends it: a heading with a colon in it and a title with one made two
-                 notice("warning", "This changes a real resource" if real else "This cannot be undone", brief.risk.text, paragraph(risk_chip(brief.risk.level))), summary(rows),
+                 notice("warning", "What could go wrong" if real else "This cannot be undone", brief.risk.text, paragraph(risk_chip(brief.risk.level))), summary(rows),
                  fmt('<p class="m">{where}</p>', where=f"This is the {brief.where.noun} {brief.where.name}{place}{named}."),
                  answer])
-    return page(ctx, f"Confirm this change: {title}", body, ai=True, models=brief.models or None, why=CONFIRM_WHY)
+    return page(ctx, f"Confirm this change: {title}", body, ai=True, models=brief.models or None, why=CONFIRM_WHY_REAL if real else CONFIRM_WHY)
 
 
 def _answer(ctx: Ctx, plan: PlanRecord, nonce: str, decision: str) -> Response:

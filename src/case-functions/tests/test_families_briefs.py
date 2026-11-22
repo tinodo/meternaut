@@ -127,7 +127,7 @@ class TheRegistryFeedsTheBrief(unittest.TestCase):
                 self.assertTrue(b.headline.endswith(f"in group {fs.GROUP}"), b.headline)
                 self.assertIn(plan.resource_name, b.change)
                 self.assertIn(f"resource group {fs.GROUP}", b.change)
-                self.assertEqual(b.who_acts, brief.WHO_ACTS, "who acts is the same for every family: the approver, with their own rights")
+                self.assertEqual(b.who_acts, brief.WHO_ACTS, "who acts is the same for every family: Meternaut makes the change, with the approver's own rights")
                 self.assertTrue(b.rechecked.startswith("Right before it acts, Meternaut reads the "), b.rechecked)
                 for held in ("still tagged as planted by Meternaut", "still in this resource group", "not locked"):
                     self.assertIn(held, b.rechecked)
@@ -150,6 +150,41 @@ class TheRegistryFeedsTheBrief(unittest.TestCase):
         self.assertIn("Its disks and public IP addresses keep billing", a_brief(*made("stop-vm")[1:]).saving.basis)
         self.assertIn("Meternaut did not read the price list, so this is an estimate.", a_brief(*made("resize-vm")[1:]).saving.basis)
         self.assertIn("the share of scale units that is taken away", a_brief(*made("scale-vpn-gateway")[1:]).saving.basis)
+
+    def test_who_makes_a_change_is_one_story_on_the_page_the_card_and_the_letter_of_every_family(self):
+        """Meternaut makes the change, with the approver's own permissions, when the approver approves. The words of no family, and not the row "Who does it", also say that the approver does it."""
+        for name in MAKERS:
+            with self.subTest(name):
+                world, plan, case = made(name)
+                b = a_brief(plan, case)
+                self.assertTrue(b.who_acts.startswith("Meternaut makes the change, with your own permissions."), b.who_acts)
+                shown = {"the page": console_of(world, plan, case).get(f"/ok/{plan.plan_id}").content, "the card": " ".join(texts_of(cards.card_for(b, card_context(b))).values()),
+                         "the letter": letters.approval_letter(plan, case, PERSON, BASE, fs.NOW, CONTACTS).text}
+                for where, text in shown.items():
+                    self.assertNotRegex(text, r"(?i)\byou do (it|the change)\b", f"{where} says that the approver makes the change, and it also says that Meternaut does")
+                    self.assertIn("own permissions", text, where)
+
+    def test_a_change_of_a_real_family_says_what_the_second_ai_doubts_on_its_card_and_in_its_letter_and_a_change_that_it_did_not_doubt_says_nothing_of_it(self):
+        # The first test of this was made on a family that is not in the registry, and a removal of the doubt for the real families went unseen: here it is each family that makes a change.
+        doubt = "A monthly batch job may still need the larger size."
+        said = f'The second AI says: "{doubt}"'
+        for name in MAKERS:
+            with self.subTest(name):
+                world, plan, case = made(name)
+                doubted = replace(case, objections=(doubt,), learned={**case.learned, "skeptic": "agree"})
+                quiet = replace(case, objections=(), learned={**case.learned, "skeptic": "agree"})
+                b = a_brief(plan, doubted)
+                self.assertEqual((b.doubt, "The second AI agreed, with a caution." in b.confidence.because), (doubt, True))
+                on_card = texts_of(cards.card_for(b, card_context(b)))["risk"].replace("\\", "")
+                in_letter = next(line for line in letters.approval_letter(plan, doubted, PERSON, BASE, fs.NOW, CONTACTS).text.splitlines() if line.startswith("What could go wrong: "))
+                self.assertTrue(on_card.endswith(f" {said}"), on_card)
+                self.assertTrue(in_letter.endswith(f" {said}"), in_letter)
+                self.assertEqual((on_card.count(said), in_letter.count(said)), (1, 1))
+                self.assertIn(doubt, console_of(world, plan, doubted).get(f"/ok/{plan.plan_id}").content, "and the page says it, as a quote of the second AI")
+                none = a_brief(plan, quiet)
+                self.assertEqual(none.doubt, "")
+                self.assertNotIn("The second AI says", texts_of(cards.card_for(none, card_context(none)))["risk"])
+                self.assertNotIn("The second AI says", letters.approval_letter(plan, quiet, PERSON, BASE, fs.NOW, CONTACTS).text)
 
     def test_the_words_of_a_known_family_are_the_registrys_and_a_text_in_the_stored_plan_changes_none_of_them(self):
         for name in MAKERS:

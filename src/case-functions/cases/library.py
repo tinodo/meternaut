@@ -2,7 +2,8 @@
 
 The Scholar (cases/study.py) has one tool, `fetch_doc`. This app runs it: it reads one public page of Microsoft's documentation, with no token of any kind, from an address that passes
 `doc_url` and is on the list of calls of the Study (http.docs_calls), and gives the text of the page back in windows. Nothing of the estate goes into a call: all that an address can
-hold is a path of plain words, or the one filter of the price list, so the tool is no way out for anything that a model knows. What comes back is data for the Scholar to read, and what
+hold is a path of plain words, the one filter of the price list, or the one `view` that Learn itself puts on the address of a page that has several (Azure SQL: Learn answers the address without
+it with a redirect to the one with it, and every address that a redirect names is held to `doc_url` before it is called), so the tool is no way out for anything that a model knows. What comes back is data for the Scholar to read, and what
 the Scholar answers is data for code to check: `verified_quote` holds a quote to the text of the page that this run read, so that a claim is kept only when its words are on the page that
 its address names (a quote that the page does not hold is thrown away, whatever the Scholar says it means).
 
@@ -54,6 +55,9 @@ ERRORS = ("bad-arguments", "unknown-tool", "not-allowed", "unavailable", "not-te
 
 PATH_PART = re.compile(r"[A-Za-z0-9._~-]{1,100}")
 FILTER = re.compile(r"[A-Za-z0-9 '_.,()-]{1,200}")
+VIEW_HOST = "learn.microsoft.com"  # the one host that gives a page a view: Learn answers a page that several services share (Azure SQL) with a redirect to the address with `?view=<moniker>`
+MAX_VIEW = 40  # the most characters of a moniker
+MONIKER = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")  # one or more lower-case words of letters and digits with a single hyphen between them: never empty
 # A quote holds words, numbers and the marks of a sentence, and nothing that markup, a link, a command or a file path needs: no angle bracket, brace, square bracket, backtick, bar, backslash
 # or colon-slash. A sentence from a page that has one of them is not a claim, and the Scholar is left to quote another.
 QUOTE_CHARS = r"\w .,;:!?'\"\u2018\u2019\u201c\u201d()%$&+*=\u2013\u2014/-"
@@ -76,16 +80,25 @@ class LibraryError(Exception):
 DOC_AREAS = {"learn.microsoft.com": ("azure", "rest", "lifecycle"), "azure.microsoft.com": ("pricing",)}  # the first folder of a page that the Study may read: Microsoft's own documentation and price pages, never the areas of Learn that people write in (answers, collections, users, community)
 
 
+def _viewed(host: str, query: str) -> bool:
+    """Whether a query is the one that an address of Learn may carry: `view=` and a moniker (MONIKER, at most MAX_VIEW characters) and nothing else, so no other parameter beside it or instead of it."""
+    token = query[len("view="):] if query.startswith("view=") else ""
+    return host == VIEW_HOST and len(token) <= MAX_VIEW and MONIKER.fullmatch(token) is not None
+
+
 def doc_url(value: object) -> str | None:
     """The address if it is one that the Study may read, else None. A page of the two hosts of http.DOCS_PAGES: https, the host alone (no user, no port), a path under the English folder and
-    then one of the folders of DOC_AREAS, of plain words between slashes (no encoded character, no folder of dots only) and no query or fragment. The price list: its one address, with nothing or
-    one `$filter` of plain words."""
+    then one of the folders of DOC_AREAS, of plain words between slashes (no encoded character, no folder of dots only), no fragment, and no query but the one `view` that Learn puts on the
+    address of a page that has several (`_viewed`). The price list: its one address, with nothing or one `$filter` of plain words."""
     if not isinstance(value, str) or not 12 <= len(value) <= MAX_URL or not value.isascii() or any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
         return None
     base, mark, query = value.partition("?")
     if "#" in value or "\\" in value or "%" in value:
         return None
-    parts = urlsplit(base)
+    try:
+        parts = urlsplit(base)
+    except ValueError:  # a bracket in the host that nothing closes
+        return None
     if parts.scheme != "https" or parts.query or parts.fragment:
         return None
     if parts.netloc == PRICES_HOST:
@@ -95,7 +108,7 @@ def doc_url(value: object) -> str | None:
             return None
         return value
     prefix = DOCS_PAGES.get(parts.netloc)
-    if prefix is None or mark or " " in base or not parts.path.startswith(prefix) or base != f"https://{parts.netloc}{parts.path}":
+    if prefix is None or (mark and not _viewed(parts.netloc, query)) or " " in base or not parts.path.startswith(prefix) or base != f"https://{parts.netloc}{parts.path}":
         return None
     rest = [part for part in parts.path[len(prefix):].split("/") if part != ""]
     if not 1 <= len(rest) <= MAX_SEGMENTS or "//" in parts.path or not all(PATH_PART.fullmatch(part) and set(part) != {"."} for part in rest):
@@ -106,9 +119,9 @@ def doc_url(value: object) -> str | None:
 
 
 def _request_url(url: str) -> str:
-    """The address as it is sent: the filter of the price list is percent-encoded, and nothing else of an address needs it."""
+    """The address as it is sent: the filter of the price list is percent-encoded, and nothing else of an address needs it (the words of a view are plain)."""
     base, mark, query = url.partition("?")
-    return f"{base}?$filter={quote(query[len('$filter='):], safe='')}" if mark else base
+    return f"{base}?$filter={quote(query[len('$filter='):], safe='')}" if mark and urlsplit(base).netloc == PRICES_HOST else url
 
 
 def reference_url(resource_type: str) -> str | None:
@@ -168,11 +181,19 @@ def text_of_html(raw: str) -> str:
     return read_html(raw)[0]
 
 
+def _joined(base: str, href: str) -> str:
+    """The address that a reference names, found from the address that it is in (an empty text when the two make none: a bracket in a host that nothing closes is an error of urljoin)."""
+    try:
+        return urljoin(base, href)
+    except ValueError:
+        return ""
+
+
 def links_of(base: str, hrefs: Iterable[str]) -> tuple[str, ...]:
     """The links of a page that may be read themselves (doc_url), each once and with no query or fragment, in the order of the page, at most MAX_LINKS: where the Scholar can go next."""
     found: list[str] = []
     for href in hrefs:
-        target = doc_url(urljoin(base, href.split("#", 1)[0].split("?", 1)[0]))
+        target = doc_url(_joined(base, href.split("#", 1)[0].split("?", 1)[0]))
         if target is not None and target != base and target not in found:
             found.append(target)
             if len(found) >= MAX_LINKS:
@@ -314,6 +335,8 @@ class Library:
         self.log: list[dict] = []
 
     def _fetch(self, url: str) -> tuple[bytes, str]:
+        """The body and the kind of the page at an address that passes doc_url. Learn answers a page that has several views with a redirect to the address with `?view=<moniker>`: it is followed, and so
+        is any other redirect, at most MAX_HOPS of them, and each address that a redirect names has to pass doc_url (the same host list, the same path, no other query) before it is called."""
         address = url
         for _ in range(MAX_HOPS + 1):
             try:
@@ -334,7 +357,7 @@ class Library:
                 where = str(headers.get("location", ""))
                 if not where:
                     raise LibraryError("unavailable")
-                address = doc_url(urljoin(address, where)) or ""
+                address = doc_url(_joined(address, where)) or ""
                 if not address:
                     raise LibraryError("not-allowed")
                 continue

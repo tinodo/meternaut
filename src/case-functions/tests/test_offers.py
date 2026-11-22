@@ -502,6 +502,7 @@ class TheIntroduction(unittest.TestCase):
         self.assertEqual(second["title"], "[Meternaut] A decision waits for you")
         self.assertEqual(link_of(first["card"])["url"], f"{cs.BASE}/")
         self.assertIn("You chose Teams, and you are on my list of people.", json.dumps(first["card"]))
+        self.assertIn("I never change anything on my own.", json.dumps(first["card"]), "the same sentence before advice and before a change: it is said once, at the first request")
         for message in (first, second):
             self.assertEqual((message["to"], cardcheck.check(message["card"])), ("maya@example.com", []))
         self.assertEqual([(m.kind, m.status, m.plan_id) for m in self.world.tries()], [("first-contact-card", "sent", None), ("advice-card", "sent", cs.PLAN_ID)])
@@ -552,6 +553,33 @@ class TheIntroduction(unittest.TestCase):
                                             finished_at="2026-11-05T10:10:00Z", result="Deleted.", correlation_id="x"))
         self.assertEqual(world.run(), 2)
         self.assertEqual([m.kind for m in world.tries()], ["first-contact-card", "notice-card"])
+        self.assertIn("I never change anything on my own.", json.dumps(world.queue_fake.messages()[0]["card"]))
+
+    def test_the_first_card_says_the_same_before_advice_and_before_a_change_because_it_is_said_once_at_the_first_request(self):
+        # It said "I change nothing myself" before advice and "I make a change only after you approve it" before a change: a person whose first request was advice read the first, and read "Meternaut makes the
+        # change" at the next request. One sentence that is true of both is said now.
+        said = []
+        for plan in (cs.advice_plan(), cs.change_plan()):
+            world = cs.World()
+            world.open_plan(plan)
+            world.channel(cs.MAYA)
+            self.assertEqual(world.run(), 2)
+            first = world.queue_fake.messages()[0]
+            self.assertEqual(first["title"], "[Meternaut] An AI assistant for Azure costs will write to you")
+            said.append(json.dumps(first["card"]))
+        self.assertEqual(said[0], said[1], "the same card before advice and before a change")
+        self.assertIn("I never change anything on my own. You answer a request with the buttons on its card.", said[0])
+        self.assertNotIn("I change nothing myself", said[0] + said[1])
+        self.assertNotIn("only after you approve it", said[0] + said[1])
+
+    def test_before_the_card_of_a_change_that_waits_the_first_card_is_the_same_one(self):
+        world = cs.World()
+        world.open_plan(cs.change_plan())
+        world.channel(cs.MAYA)
+        self.assertEqual(world.run(), 2)
+        first, second = world.queue_fake.messages()
+        self.assertEqual(second["title"], "[Meternaut] A change to Azure waits for your OK")
+        self.assertIn("I never change anything on my own.", json.dumps(first["card"]))
 
 
 class TheCardsAboutAChange(unittest.TestCase):

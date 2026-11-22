@@ -840,7 +840,8 @@ class TheLimits(Base):
             for path in {path for held in (spec.get("limits") or {}).values() for path in held}:
                 self.assertEqual(len({json.dumps(held[path], sort_keys=True) for held in (spec.get("limits") or {}).values() if path in held}), 1, "a page is the page of a type: one range for a name")
         self.assertEqual(ROWS["lightly-used-bastion-with-four-units"]["limits"], {"r1": {"scaleUnits": {"lowest": 2, "highest": 50}}}, "what the reference page of the type says of its property")
-        self.assertEqual([r["id"] for r in ROWS.values() if r.get("limits")], ["lightly-used-bastion-with-four-units", "bastion-four-units-full-story"])
+        self.assertEqual([r["id"] for r in ROWS.values() if r.get("limits")], ["lightly-used-bastion-with-four-units", "bastion-four-units-full-story", "heldout-appgw-mincap"],
+                         "the rows that give a range: the two of the host (its one property, as the page gives it) and the held-out gateway (the minimum and the maximum capacity of its autoscale, Min value = 0 and Min value = 2 on the reference page of its type, which the app's own reader makes of that page)")
 
 
 class StoryEstate(PricedEstate, DepthEstate):
@@ -880,7 +881,7 @@ class TheStory(Base):
             for n in range(evals.DAYS):
                 estate.bill.append((SUB, dt.date(2026, 10, 5) + dt.timedelta(days=n), resource_id, spec["service"], words, round(item["per_day"] * item["usd_per_unit"], 2), item["per_day"]))
         estate.definitions[spec["type"]] = [definition(spec["metric"], "Count", "Total")]
-        estate.lines = [price_line(line["sku"], line["meter"], line["usd"], line["unit"], product=spec["meters"][0]["subcategory"], service=spec["service"]) for line in spec.get("prices") or []]
+        estate.lines = [price_line(line["sku"], line["meter"], line["usd"], line["unit"], product=line.get("product", spec["meters"][0]["subcategory"]), service=spec["service"]) for line in spec.get("prices") or []]
         box = toolbox(estate)
         ask(box, "list_resources", type=spec["type"])
         box.arm.activity_events = mock.Mock(side_effect=tb.HttpError(403, "no"))  # a Watch whose identity cannot read the Activity Log: nothing is known of the age, like an invented resource
@@ -956,6 +957,66 @@ class TheStory(Base):
         ask(real_box, "cost_meters", handle="r1")
         real = ask(real_box, "price_alternatives", meter="m1")
         self.assertEqual((real["match"], real["current"]["retail"], real["lines"], real["other_units"]), ("found", 0.29, 6, 1), "the shipped row: the base charge against the list of its product")
+
+    def test_the_held_out_rows_are_shown_as_the_real_toolbox_shows_them_in_their_bill_their_list_and_their_profile(self):
+        held = [r for r in ROWS.values() if r["id"].startswith("heldout-") and r.get("meters")]
+        self.assertEqual([r["id"] for r in held], ["heldout-firewall", "heldout-appgw-mincap", "heldout-sql-vcores", "heldout-sql-busy"], "the four rows of other kinds give a bill and a list, as the real words of the list of 2026-11-22 name them")
+        for spec in held:
+            with self.subTest(row=spec["id"]):
+                box = self.real(spec)
+                self.assertEqual(ask(box, "cost_meters", handle="r1"), self.fixture(spec, "cost_meters", handle="r1"), "the same answer, value for value")
+                for number in range(1, len(spec["meters"]) + 1):
+                    ask(box, "price_alternatives", meter=f"m{number}", within="service")  # the real tool gives a line its handle when it first shows it, and the fixture numbers the whole list: they agree when the whole service is shown first
+                for number in range(1, len(spec["meters"]) + 1):
+                    for arguments in ({}, {"within": "service"}):
+                        real, fake = ask(box, "price_alternatives", meter=f"m{number}", **arguments), self.fixture(spec, "price_alternatives", meter=f"m{number}", **arguments)
+                        self.assertEqual(real, fake, f"m{number} {arguments}: the lines in the unit of the meter, of its product or of the service, the line that has its name as current, and the handles")
+                real_profile, fake_profile = ask(box, "profile", handles=["r1"])["profiles"][0], self.fixture(spec, "profile", handles=["r1"])["profiles"][0]
+                self.assertEqual((real_profile["sku"], real_profile["meters"]), (fake_profile["sku"], fake_profile["meters"]))
+        gateway = ROWS["heldout-appgw-mincap"]
+        self.assertEqual({line["product"] for line in gateway["prices"] if "product" in line}, {"Application Gateway Basic v2"}, "the lines of the Basic tier have a product of their own, which the real tool lists only within the service")
+
+    def test_a_list_of_two_products_is_shown_within_the_product_and_within_the_service_as_the_real_toolbox_shows_it_and_its_registers_offer_a_line_of_the_other_product_only_after_the_second(self):
+        spec = {**self.invented(), "meters": [self.item("Big Units", 10, 2.0), self.item("Per GB", 2, 3.0, "1 GB")], "resources": [{"h": "r1", "usd": 780.0, "total": 3, "sku": "Standard"}],
+                "prices": [self.listed("Plus", "Big Units", 3.0), self.listed("Plus", "Per GB", 3.5, "1 GB"), *({**self.listed(sku, name, usd, unit), "product": "Lite Tier"} for sku, name, usd, unit in (
+                    ("Lite", "Big Units", 1.0, "1 Hour"), ("Lite", "Lite Units", 0.5, "1 Hour"), ("Lite", "Lite GB", 0.2, "1 GB")))]}
+        box = self.real(spec)
+        ask(box, "cost_meters", handle="r1")
+        for number in (1, 2):
+            ask(box, "price_alternatives", meter=f"m{number}", within="service")  # the numbering step: see the test of the held-out rows
+        for number in (1, 2):
+            for arguments in ({}, {"within": "service"}, {"offset": 1}, {"within": "service", "offset": 1}):
+                with self.subTest(meter=number, arguments=arguments):
+                    real, fake = ask(box, "price_alternatives", meter=f"m{number}", **arguments), self.fixture(spec, "price_alternatives", meter=f"m{number}", **arguments)
+                    self.assertEqual(real, fake)
+        real, fake = ask(box, "price_alternatives", meter="m1"), self.fixture(spec, "price_alternatives", meter="m1")
+        self.assertEqual((real["within"], real["lines"], real["other_units"], real["match"]), ("product", 1, 1, "found"), "the lines of the other product are not read, so they are not counted")
+        real, fake = ask(box, "price_alternatives", meter="m1", within="service"), self.fixture(spec, "price_alternatives", meter="m1", within="service")
+        self.assertEqual((real["within"], real["lines"], real["other_units"], real["match"], real["current"]["retail"]), ("service", 3, 2, "found", 3.0), "the line of the same name in the other product does not make the lines disagree")
+
+        def offered(box, market, meter):
+            """The lines, as (product, SKU, meter), that the toolbox and the replay offer for a meter after the same calls: the handles are numbered in the order of the calls, and the lines are the same."""
+            return ({(box.prices[handle].product, box.prices[handle].sku, box.prices[handle].meter) for handle in box.offers[meter]},
+                    {(market.prices[handle].product, market.prices[handle].sku, market.prices[handle].meter) for handle in market.offers[meter]})
+
+        for arguments, lines in (({}, 1), ({"within": "service"}, 3)):
+            narrow_box, trace, answer = self.real(spec), [], evals.handler_of(spec)[0]
+            for name, call in (("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m1", **arguments})):
+                ask(narrow_box, name, **call)
+                trace.append({"name": name, "arguments": call, "result": answer(name, call)})
+            market = evals._market(spec, pricing, evals.shown_bill(trace), {})
+            with self.subTest(registers=arguments):
+                real_lines, fake_lines = offered(narrow_box, market, "m1")
+                self.assertEqual((real_lines, len(real_lines), narrow_box.retail["m1"], market.retail["m1"]), (fake_lines, lines, 3.0, 3.0), "the replay offers the lines that the toolbox does, and registers the list price of the line of the meter")
+
+    def test_lines_that_differ_in_their_product_alone_are_listed_and_numbered_in_the_order_of_the_real_tools_sort(self):
+        spec = {**self.invented(), "meters": [self.item("Big Units", 10, 2.0)], "resources": [{"h": "r1", "usd": 600.0, "total": 3, "sku": "Standard"}],
+                "prices": [self.listed("Plus", "Big Units", 3.0), *({**self.listed("Lite", "Big Units", 1.0), "product": product} for product in ("Zeta Tier", "Alpha Tier"))]}
+        box = self.real(spec)
+        ask(box, "cost_meters", handle="r1")
+        real, fake = ask(box, "price_alternatives", meter="m1", within="service"), self.fixture(spec, "price_alternatives", meter="m1", within="service")
+        self.assertEqual(real, fake, "the real tool sorts by price, product, SKU, name and region: two lines that differ in their product alone are in the order of their products, and numbered so")
+        self.assertEqual([row[1] for row in fake["rows"]], ["Alpha Tier", "Zeta Tier", "Standard Tier"])
 
     def test_the_registers_that_the_replay_reads_of_the_calls_of_the_investigator_are_the_real_toolboxs_for_the_same_calls_the_meters_that_share_a_list_with_the_asked_one_included(self):
         story = ROWS[STORY_ROW]

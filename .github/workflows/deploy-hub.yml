@@ -97,7 +97,7 @@ on:
           - connection
           - auto
       evals_only:
-        description: "Only with foundry-evals and evals_command run: the ids of the invented cases to replay, separated by commas (for example idle-disk-1,idle-bastion-with-four-units), when not every case is to be replayed. The thresholds are then judged over those cases alone, and each case costs about 60,000 tokens of the cap of evaluation/limits.json. The ids are letters, digits and hyphens with commas between them, and an id starts and ends with a letter or a digit, at most 80 characters; an id that is not a case stops the run before any call is made. Empty replays every case. Every other action ignores it."
+        description: "Only with foundry-evals and evals_command run: the ids of the invented cases to replay, separated by commas (for example idle-disk-1,idle-bastion-with-four-units), when not every case is to be replayed. The thresholds are then judged over those cases alone, and each case costs 73,000 to 93,000 tokens of the cap of evaluation/limits.json (1,500,000 tokens: the 38 cases together do not fit it, so a replay names its cases). The ids are letters, digits and hyphens with commas between them, and an id starts and ends with a letter or a digit, at most 80 characters; an id that is not a case stops the run before any call is made. Empty replays every case and stops at the cap: a case that it did not reach is not replayed and has no verdict. Every other action ignores it."
         type: string
         required: false
         default: ""
@@ -2834,7 +2834,7 @@ jobs:
       - name: Run the evaluations of the Investigator in the Operator
         id: aisec_evals
         if: inputs.action == 'foundry-evals'
-        # The replay makes up to 12 responses for each of 31 cases (each costs about 60,000 tokens; the input evals_only limits the replay to some of them), then the evaluation runs wait up to 15 minutes each; the tool stops itself at the seconds of evaluation/limits.json (3,300). The group is given
+        # The replay makes up to 12 responses for each of 38 cases (each costs 73,000 to 93,000 tokens; the input evals_only limits the replay to some of them), then the evaluation runs wait up to 15 minutes each; the tool stops itself at the seconds of evaluation/limits.json (3,300). The group is given
         # 60 minutes (3600 seconds, the most that tools/operator-run.py allows); the tool deletes the group at the end of every run, and the limit of the step is a second line behind that.
         timeout-minutes: 75
         env:

@@ -9,7 +9,7 @@ What is made of the lessons, all of it by code and all of it explainable:
 
 * `past_of` counts the lessons of one (resource type, family): how many requests people answered, how many said yes, why the others declined, how the saving that was measured compares with
   the one that was predicted, how many changes were undone within weeks. `digest_of` keeps four numbers and a flag of that in the case, and the brief writes the one line from it
-  (brief.past_line), or says "no history yet" below MIN_ANSWERED.
+  (brief.past_line), and says nothing below MIN_ANSWERED: with no history there is nothing to say.
 * `calibrated_confidence` says what past outcomes support for a confidence that the first AI stated: the share of the labelled outcomes in the same band (BANDS) that were approved, when
   there are at least MIN_BAND of them. `hold` uses it in one way only: a proposal whose stated confidence is at or above the gate and whose calibrated confidence is below it goes to a person
   as a finding that needs one. Learning only ever makes a finding weaker: a calibrated confidence above the stated one changes nothing. The Watch calls `hold` only when LEARNING_HOLD is on,
@@ -47,7 +47,7 @@ from .models import ADVISE, DECLINE_REASONS, HELD, ActionRecord, CaseRecord, Les
 
 LOG = logging.getLogger("meternaut.learning")
 
-# A line of the brief shows numbers only when at least this many requests of the kind were answered by a person; below it, it says that there is no history yet.
+# A line of the brief shows numbers only when at least this many requests of the kind were answered by a person; below it, the brief says nothing of the past.
 MIN_ANSWERED = 3
 # A confidence is corrected only when at least this many labelled outcomes lie in its band.
 MIN_BAND = 5
@@ -334,7 +334,7 @@ def superseded_ids(entries: Iterable[tuple[str, LessonRecord]]) -> set[str]:
 
 
 def calibrated_confidence(stated: object, lessons: Iterable[LessonRecord]) -> Calibrated | None:
-    """What the lessons support for a confidence that the first AI stated, or None (the brief then says that there is no history yet) when fewer than MIN_BAND labelled outcomes lie in the
+    """What the lessons support for a confidence that the first AI stated, or None (the lessons are too few to correct anything, and nothing is held back) when fewer than MIN_BAND labelled outcomes lie in the
     band of the stated one. `lessons` are those of one resource type and family. It is a bucket correction: no model, no curve, one count divided by another."""
     band = band_of(stated)
     if band is None:

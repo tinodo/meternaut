@@ -143,7 +143,7 @@ def nobody(days: int, peak: float) -> str | None:
         return (f"Azure Monitor shows the connection count of the gateway for {days} of the last {CONNECTION_DAYS} days, so it is not known that nobody uses it "
                 f"(at least {CONNECTION_MIN_DAYS} days with a value are needed)")
     if peak > 0:
-        return f"users were connected to the gateway in the last {CONNECTION_DAYS} days (up to {peak:g} at one time)"
+        return f"users were connected to the gateway in the last {CONNECTION_DAYS} days (up to {peak:g} connections at one time)"
     return None
 
 

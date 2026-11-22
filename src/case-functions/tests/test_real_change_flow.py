@@ -22,7 +22,7 @@ from test_investigate import FakeFoundry, FakeToolbox, Harness, answer, entry, f
 from test_words import Rendered, _letter, blocks_of_card, blocks_of_html, problems
 
 from cases import brief as brief_mod
-from cases import letters, pricing, proposals, upkeep
+from cases import letters, pricing, proposals, stake, upkeep
 from cases.families import gates, words
 from cases.models import NoteRecord
 from cases.runner import execute
@@ -214,10 +214,12 @@ class FromTheAnswerToTheChange(unittest.TestCase):
                         self.assertNotIn("makes the change right then", text)
                     for stock in OLD_STOCK + ("Meternaut cannot make this change itself",):
                         self.assertNotIn(stock, text)
+                    self.assertNotRegex(text, r"(?i)\byou do it\b", "Meternaut makes the change with the approver's permissions: no surface also says that the approver does it")
                     self.assertEqual([], problems(replace(one, name=f"the line on, {surface}")))
             terms = [(block.text, block.kind) for block in asked["page"].blocks if block.kind in ("term", "value") and not block.details]
             self.assertEqual([text for text, kind in terms if kind == "term"], ["What changes", "Who does it", "Checked again", "What could go wrong", "Undo"])
             self.assertEqual([text for text, kind in terms if kind == "value"][0], said.change)
+            self.assertTrue([text for text, kind in terms if kind == "value"][1].startswith("Meternaut makes the change, with your own permissions."), "who does it: one story")
             self.assertIn(said.rechecked, [text for text, kind in terms])
             self.assertIn(said.risk, [text for text, kind in terms])
             self.assertIn(said.undo, [text for text, kind in terms])
@@ -276,6 +278,8 @@ class FromTheAnswerToTheChange(unittest.TestCase):
             self.assertEqual(reply.headings(1), ["Confirm this change"])
             self.assertEqual([node.text() for node in reply.main.find_all("strong")], ["Scale down the bastion host bastion-one: scale units from 4 to 2."], "the title has its own line, and the line ends with a full stop")
             self.assertIn("This changes a real resource. Nothing is changed until you confirm here.", reply.main.text())
+            self.assertEqual(reply.main.text().count("This changes a real resource"), 1, "said once: the lead says it and the notice under it does not")
+            self.assertIn("You see this because you asked to approve a change to a real resource, and every change to a real resource asks once more.", reply.content, "the foot is true of this change, which can be undone")
             self.assertIn("Meternaut does not know what a lower number takes away from what uses the bastion host.", reply.main.find("div", class_="notice warning").text())
             self.assertEqual((console.delegate.begins, world.store.decisions_of_plan(plan.plan_id)), ([], []), "nothing is recorded and no sign-in starts at the first press")
             card = tfs.card_of(tfs.shown(world, plan))
@@ -333,6 +337,27 @@ class FromTheAnswerToTheChange(unittest.TestCase):
                 lane = console_of(world, plan, mine).get("/").main.text()
                 self.assertNotIn("proposes no change", lane, "the lane of a request that asks does not say that nothing is proposed, over a row that says what the AI proposes")
                 self.assertIn("Each of these is a change that Meternaut would make in Azure after you approve it." if on else "Meternaut makes no change for these. Your answer to each is recorded with your name.", lane)
+
+    def test_the_same_act_carries_the_same_risk_whether_the_line_of_the_owner_is_off_or_on(self):
+        # With the line off the request is advice about the act and said "High risk if you act" for a kind that others share, where the change that Meternaut makes of the same finding said "Medium risk":
+        # opening or closing a gate changed the risk that a person was told of one act. Both now ask the one function that the words of the family that lowers a number ask.
+        def chip_and_page(on: bool) -> tuple[tuple[str, str], str]:
+            with mock.patch.object(gates, "REAL_CHANGES_ALLOWED", on):
+                world, lead, mine = world_of(host(), self.case)
+                plan = world.approvals.plan_for(mine, lead, (OID,))
+                self.assertEqual(plan.family, "change-setting" if on else "advise")
+                b = tfs.shown(world, plan)
+                return (b.risk.level, stake.chips_of(b)[0]), read(surfaces(world, plan)["page"])
+
+        with mock.patch.object(brief_mod, "shared", lambda kind: True):  # the kind is one that others share: the rule that made advice a high risk
+            (closed, closed_page), (opened, opened_page) = chip_and_page(False), chip_and_page(True)
+            self.assertEqual((closed, opened), (("medium", "Medium risk if you act"), ("medium", "Medium risk")))
+            self.assertIn("Medium risk if you act", closed_page)
+            self.assertIn("Medium risk", opened_page)
+            self.assertNotIn("High risk", closed_page + opened_page)
+            for level in ("high", "low"):
+                with mock.patch.object(words, "setting_level", lambda level=level: level):  # one place decides it: change it there and both change
+                    self.assertEqual([chip_and_page(on)[0][0] for on in (False, True)], [level, level])
 
     def test_the_request_that_asked_is_taken_back_once_with_its_words_and_the_new_request_is_named_on_its_page_and_in_the_history(self):
         world, lead, case = world_of(host(), self.case)

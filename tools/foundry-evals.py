@@ -20,7 +20,7 @@ run     Replays the Investigator on the invented fixtures of evaluation/cases.js
         --judge connection  also the quality evaluators, with the judge model reached through the AI Gateway connection of the lock (`<connection>/<alias>`): no direct deployment is a judge.
         --judge auto        connection first, and none when the service refuses the evaluators that need a judge.
         --only ID[,ID...]   replays only the fixtures that it names (ids of evaluation/cases.jsonl, separated by commas or by spaces) and judges the thresholds over those rows alone: a threshold
-                            that none of them asks for is printed UNKNOWN. An id that is no row, or that starts with a hyphen, is refused before any call is made. About 60,000 tokens a fixture. It also
+                            that none of them asks for is printed UNKNOWN. An id that is no row, or that starts with a hyphen, is refused before any call is made. 35,000 tokens for an older fixture and 73,000 to 93,000 for one with a bill and a list. It also
                             prints, for each fixture, what the Investigator answered as the grader read it: the tools that it called and each finding with the verdict of the app's rules (docs/proposals/11).
         --candidate NAME    replays against a candidate of the instructions and never against the production agent: a temporary agent `meternaut-candidate-...` in the project, with the production definition and the
                             instructions of evaluation/candidates/NAME.txt (plain UTF-8 text of 1 to 20,000 characters, not the production text), graded and capped as the production agent is. It is deleted when the
@@ -110,7 +110,7 @@ ROW_FIELDS = ("id", "kind", "type", "metric", "resources", "expect")  # what eve
 OPTIONAL_FIELDS = ("inject", "service", "unit", "dimensions", "unavailable", "history", "workspaces", "parts", "commitments", "no_metrics", "props", "knowledge", "limits", "meters", "prices")  # what a row may have besides
 METER_WORDS = METER_COLUMNS[1:7]  # the six words of a meter: category, subcategory, name, pricing, charge and unit
 METER_FIELDS = ("subcategory", "name", "pricing", "charge", "unit", "per_day", "usd_per_unit")  # what each meter of a row's `meters` has: its words (the category is the row's service), the quantity of it that one resource has each day, and its rate
-PRICE_FIELDS = ("sku", "meter", "usd", "unit")  # what each line of a row's `prices` has
+PRICE_FIELDS = ("sku", "meter", "usd", "unit")  # what each line of a row's `prices` has, and `product` when the list names it otherwise than the meters do
 DESCRIBED_PROPERTIES = 30  # the most properties that describe and profile show of a resource, as cases/toolbox.py says
 MAX_LISTED = 40  # the most lines of the price list that one answer shows, as cases/toolbox.py says
 DOSSIER_METERS = 6  # the dearest meters of a resource that profile shows, as cases/dossier.py METER_ROWS says
@@ -170,7 +170,8 @@ PARAMETERS = {  # what each tool takes, as cases/toolbox.py declares it: name ->
 # as the real ones do, and the grader refuses a setting whose new number is outside it, as the app does), knowledge (the claims that recall_knowledge shows for the type of the row: a kind of
 # the closed list of the Study, the address of a page of Microsoft's documentation and a quote that the page holds, as the Study keeps them), meters (what every resource of the row is billed for,
 # as METER_FIELDS: the words of each meter, the quantity of it that one resource has each day and its rate, the same every day, so that the cost of a resource is the sum of its meters over the window)
-# and prices (the list prices of the product of those meters, as PRICE_FIELDS, in the one region of the row, as the real list gives them: a price of nothing is no line there, so it is none here).
+# and prices (the list prices of the service of those meters, as PRICE_FIELDS, in the one region of the row, as the real list gives them: a price of nothing is no line there, so it is none here. A line has the
+# product of the meters unless it gives `product`, the productName that the list gives it: the tool for alternatives lists only the lines of the asked meter's product, and those of every product only when it is asked within the service).
 
 # The ranking of a key that cases/proposals.py reads from cases/toolbox.py (what the toolbox orders its properties by, and which of its suffixes name a count or a size), written again here because the
 # Operator's volume cannot hold the toolbox (230 KB and the files that it reads): app_code() gives it to the app's check of a setting, and a test holds each of the four to the toolbox's own.
@@ -704,11 +705,16 @@ def _cost_meters(row: dict, arguments: dict, shown: int = MAX_LISTED) -> dict:
             "offset": offset, "returned": len(rows), **({"next_offset": offset + len(rows)} if more else {}), **({"same": same} if same else {}), "cols": columns, "rows": rows}
 
 
+def _product(row: dict, line: dict) -> str:
+    """The product of a line of the list, as the list names it: the one that the line gives, else the product of the meters of the row (the dearest meter's subcategory)."""
+    return line.get("product") or _billed(row)[0]["words"][1]
+
+
 def _price_lines(row: dict) -> list[tuple[str, dict]]:
     """The lines of the list of a row that gives `prices`, each with the handle that the real tool gives a line the first time that it shows it: the lines in the units of the meters first, in the order of the
-    meters, and the cheapest first in each unit (price, SKU, meter), numbered from p1. A line has one handle whichever unit is asked about."""
+    meters, and the cheapest first in each unit (price, product, SKU, meter), numbered from p1. A line has one handle whichever unit or product is asked about."""
     units = list(dict.fromkeys(line["words"][5] for line in _billed(row)))
-    order = sorted(row.get("prices") or [], key=lambda line: (units.index(line["unit"]) if line["unit"] in units else len(units), line["usd"], line["sku"], line["meter"]))
+    order = sorted(row.get("prices") or [], key=lambda line: (units.index(line["unit"]) if line["unit"] in units else len(units), line["usd"], _product(row, line), line["sku"], line["meter"]))
     return [(f"p{place}", line) for place, line in enumerate(order, 1)]
 
 
@@ -723,23 +729,24 @@ def _price_table(cells: list[list]) -> tuple[dict, list[str], list[list]]:
 
 def _listed_prices(row: dict, arguments: dict) -> dict:
     """The prices of the list of a row that gives `meters`, in the shape of the real tool (cases/toolbox.py `_tool_price_alternatives`): the lines of the list in the unit of the meter that was asked about, the
-    cheapest first, and as `current` the line that has the meter's own name, with the price that the bill paid for a unit (its cost over its quantity) against the list price of the line. `match` says none when
-    no line has that name and several when the lines that have it differ in price. A row that gives no `prices` has a list that could not be read."""
+    cheapest first, and as `current` the line that has the meter's own product, name and unit, with the price that the bill paid for a unit (its cost over its quantity) against the list price of the line. Within
+    the product (the default) the tool reads the lines of the meter's product alone, so `lines` and `other_units` count those; within the service it reads every product's, and a line of another product is shown
+    only then. `match` says none when no line has that name and several when the lines that have it differ in price. A row that gives no `prices` has a list that could not be read."""
     held = {f"m{number}": line for number, line in enumerate(_billed(row), 1)}.get(arguments["meter"])
     if held is None or not any(r["usd"] > 0 for r in _resources(row)):
         return _error("unknown-handle")
     if not row.get("prices"):
         return _error("unavailable")
-    offset, (_, product, _, _, _, unit) = arguments["offset"] or 0, held["words"]
-    listed = _price_lines(row)
+    offset, within, (_, product, _, _, _, unit) = arguments["offset"] or 0, arguments["within"] or "product", held["words"]
+    listed = [(handle, line) for handle, line in _price_lines(row) if within == "service" or _product(row, line) == product]
     same = [(handle, line) for handle, line in listed if line["unit"] == unit]
-    own = _own(listed, held["words"])
+    own = _own(row, listed, held["words"])
     how = "none" if not own else "several" if len({line["usd"] for _, line in own}) > 1 else "found"
     page = same[offset:offset + MAX_LISTED]
     more = offset + len(page) < len(same)
-    shared, columns, table = _price_table([[handle, product, line["sku"], line["meter"], _number(line["usd"]), REGION] for handle, line in page])
-    answer = {"meter": arguments["meter"], "service": _service(row), "region": REGION, "within": arguments["within"] or "product", "unit": unit, "match": how, "lines": len(same),
-              "other_units": len(row["prices"]) - len(same), "complete": True, "source": "list", "offset": offset, "returned": len(page), **({"next_offset": offset + len(page)} if more else {}),
+    shared, columns, table = _price_table([[handle, _product(row, line), line["sku"], line["meter"], _number(line["usd"]), REGION] for handle, line in page])
+    answer = {"meter": arguments["meter"], "service": _service(row), "region": REGION, "within": within, "unit": unit, "match": how, "lines": len(same),
+              "other_units": len(listed) - len(same), "complete": True, "source": "list", "offset": offset, "returned": len(page), **({"next_offset": offset + len(page)} if more else {}),
               **({"same": shared} if shared else {}), "cols": columns, "rows": table}
     if how == "found":
         handle, line = min(own, key=lambda item: item[1]["sku"])
@@ -1145,9 +1152,9 @@ def shown_bill(trace: list[dict]) -> dict:
     return found
 
 
-def _own(listed: list[tuple[str, dict]], words: tuple) -> list[tuple[str, dict]]:
-    """The lines of the list that have the name and the unit of a meter (its six words): the line of the meter itself, which `current` is."""
-    return [(handle, line) for handle, line in listed if line["meter"] == words[2] and line["unit"] == words[5]]
+def _own(row: dict, listed: list[tuple[str, dict]], words: tuple) -> list[tuple[str, dict]]:
+    """The lines of the list that have the product, the name and the unit of a meter (its six words): the line of the meter itself, which `current` is."""
+    return [(handle, line) for handle, line in listed if _product(row, line) == words[1] and line["meter"] == words[2] and line["unit"] == words[5]]
 
 
 def _market(row: dict, pricing, bill: "dict | None", evidence: dict) -> types.SimpleNamespace:
@@ -1162,9 +1169,9 @@ def _market(row: dict, pricing, bill: "dict | None", evidence: dict) -> types.Si
     meters = {handle: pricing.Meter(scope, None, numbered[handle]["words"], numbered[handle]["per_day"] * days, round(numbered[handle]["daily"] * days, 2),
                                     {LAST_DAY - dt.timedelta(days=n): numbered[handle]["daily"] for n in range(days)}, None, LAST_DAY - dt.timedelta(days=days - 1), days)
               for handle, (scope, days) in shown.items() if handle in numbered}
-    prices = {handle: types.SimpleNamespace(service=_service(row), product=lines[0]["words"][1], sku=line["sku"], meter=line["meter"], unit=line["unit"], usd=line["usd"], region=REGION, tiers=1)
+    prices = {handle: types.SimpleNamespace(service=_service(row), product=_product(row, line), sku=line["sku"], meter=line["meter"], unit=line["unit"], usd=line["usd"], region=REGION, tiers=1)
               for handle, line in listed}
-    own = {handle: _own(listed, line["words"]) for handle, line in numbered.items()}
+    own = {handle: _own(row, listed, line["words"]) for handle, line in numbered.items()}
     own_usd = {handle: found[0][1]["usd"] for handle, found in own.items() if found and len({line["usd"] for _, line in found}) == 1}  # the list price of the line of a meter, when its line has one price
     if bill is not None:
         offers, retail, shares = {handle: set(found) for handle, found in bill["offers"].items()}, dict(bill["retail"]), {}
