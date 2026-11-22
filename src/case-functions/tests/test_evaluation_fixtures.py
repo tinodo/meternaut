@@ -1009,6 +1009,15 @@ class TheStory(Base):
                 real_lines, fake_lines = offered(narrow_box, market, "m1")
                 self.assertEqual((real_lines, len(real_lines), narrow_box.retail["m1"], market.retail["m1"]), (fake_lines, lines, 3.0, 3.0), "the replay offers the lines that the toolbox does, and registers the list price of the line of the meter")
 
+    def test_lines_that_differ_in_their_product_alone_are_listed_and_numbered_in_the_order_of_the_real_tools_sort(self):
+        spec = {**self.invented(), "meters": [self.item("Big Units", 10, 2.0)], "resources": [{"h": "r1", "usd": 600.0, "total": 3, "sku": "Standard"}],
+                "prices": [self.listed("Plus", "Big Units", 3.0), *({**self.listed("Lite", "Big Units", 1.0), "product": product} for product in ("Zeta Tier", "Alpha Tier"))]}
+        box = self.real(spec)
+        ask(box, "cost_meters", handle="r1")
+        real, fake = ask(box, "price_alternatives", meter="m1", within="service"), self.fixture(spec, "price_alternatives", meter="m1", within="service")
+        self.assertEqual(real, fake, "the real tool sorts by price, product, SKU, name and region: two lines that differ in their product alone are in the order of their products, and numbered so")
+        self.assertEqual([row[1] for row in fake["rows"]], ["Alpha Tier", "Zeta Tier", "Standard Tier"])
+
     def test_the_registers_that_the_replay_reads_of_the_calls_of_the_investigator_are_the_real_toolboxs_for_the_same_calls_the_meters_that_share_a_list_with_the_asked_one_included(self):
         story = ROWS[STORY_ROW]
         # The base charge (m1) and the additional units (m2) of the story share their list. The invented row has a meter in another unit (m3) and a meter whose name two lines of the list share (m4): it has no list price.

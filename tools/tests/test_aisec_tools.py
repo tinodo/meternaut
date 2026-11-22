@@ -830,7 +830,8 @@ class TheHeldOutRows(unittest.TestCase):
         self.assertEqual({line["meter"]: (line["sku"], line["usd"], line["unit"]) for line in firewall["prices"]}, {
             "Basic Secured Virtual Hub Deployment": ("Basic Secured Virtual Hub", 0.395, "1 Hour"), "Basic Secured Virtual Hub Data Processed": ("Basic Secured Virtual Hub", 0.065, "1 GB"),
             "Standard Deployment": ("Standard", 1.25, "1 Hour"), "Standard Data Processed": ("Standard", 0.016, "1 GB"), "Premium Deployment": ("Premium", 1.75, "1 Hour"), "Premium Data Processed": ("Premium", 0.016, "1 GB")},
-                         "the deployment and the data lines of the three tiers, as the list of Sweden Central names them (all 21 of its lines are the product Azure Firewall, the Basic lines of a hub too): it has no line called Basic Deployment or Basic Data Processed, which North Europe has at the same prices (0.395 and 0.065), and the Basic lines that Sweden Central has are those of the firewall's deployment in a hub")
+                         "the deployment and the data lines of the three tiers, as the list names them: the app's reader reads 44 lines of Azure Firewall for Sweden Central (21 of the region and 23 Global, all the product Azure Firewall) and these are six of them. "
+                         "The region has no line of its own called Basic Deployment or Basic Data Processed, and the Global lines have both at 0.395 and 0.065; the row names the Basic tier by the two Basic lines of a hub, which the list gives for the region and as Global lines at the same prices")
         self.assertEqual([(m["name"], m["unit"], m["per_day"], m["usd_per_unit"]) for m in firewall["meters"]], [("Standard Deployment", "1 Hour", 24, 1.25), ("Standard Data Processed", "1 GB", 6.25, 0.016)])
         self.assertEqual({line["meter"]: (line["sku"], line["usd"], line["unit"]) for line in gateway["prices"]},
                          {"Standard Fixed Cost": ("Standard", 0.468, "1/Hour"), "Standard Capacity Units": ("Standard", 0.0144, "1/Hour"), "Standard Captcha Sessions": ("Standard", 0.4, "1K"),
@@ -878,8 +879,8 @@ class TheHeldOutRows(unittest.TestCase):
         for row_id in (self.FIREWALL, self.DATABASE):
             ask = evals.answers_of(self.rows[row_id])["price_alternatives"]
             for number in range(1, len(self.rows[row_id]["meters"]) + 1):
-                self.assertEqual({**ask({"meter": f"m{number}"}), "within": "service"}, ask({"meter": f"m{number}", "within": "service"}), f"{row_id} m{number}: Sweden Central lists all 21 lines of the firewall "
-                                 "(the Basic lines of a hub too) under the one product Azure Firewall, and the one line of the database's vCore is in the product of its own meter, so asking within the service shows nothing more")
+                self.assertEqual({**ask({"meter": f"m{number}"}), "within": "service"}, ask({"meter": f"m{number}", "within": "service"}), f"{row_id} m{number}: the 44 lines of the firewall that the reader reads for Sweden Central "
+                                 "(21 of the region and 23 Global, the Basic lines among them) are all in the one product Azure Firewall, and the one line of the database's vCore is in the product of its own meter, so asking within the service shows nothing more")
 
     def switch_to(self, row_id, tier, names, title="Use the Basic tier"):
         """The other way that switches each meter of the row, in the order of the meters, to the line of the tier that has the name of that charge."""
@@ -2020,6 +2021,15 @@ class TheBillOfAHost(unittest.TestCase):
             with self.subTest(within=within):
                 self.assertEqual((lite in market.offers["m1"], market.retail["m1"], market.prices[lite].product, market.prices["p3"].product), (offered, 3.0, "Lite Tier", "Standard Tier"))
         self.assertIn(lite, evals._market(self.TWO, pricing, None, {}).offers["m1"], "with no replay every line of the unit counts, as it always did")
+
+    TIE = invented([meter("Big Units", 10, 2.0)], [listed("Plus", "Big Units", 3.0), *({**listed("Lite", "Big Units", 1.0), "product": product} for product in ("Zeta Tier", "Alpha Tier"))])
+
+    def test_lines_that_differ_in_their_product_alone_are_numbered_and_listed_in_the_order_of_their_products_as_the_real_tool_sorts_them(self):
+        wide = evals.answers_of(self.TIE)["price_alternatives"]({"meter": "m1", "within": "service"})
+        self.assertEqual([(row[0], row[1]) for row in wide["rows"]], [("p1", "Alpha Tier"), ("p2", "Zeta Tier"), ("p3", "Standard Tier")],
+                         "two lines with the same price, SKU and name are told apart by their product, and the list is sorted by price, product, SKU and name (cases/toolbox.py): the one that the row gives second comes first")
+        self.assertEqual([handle for handle, line in evals._price_lines(self.TIE) if line.get("product") == "Zeta Tier"], ["p2"], "and it is numbered so")
+        self.assertEqual((wide["match"], wide["current"]["line"]), ("found", "p3"), "the line of the meter is the one of its own product")
 
     def test_a_meter_that_has_no_line_of_its_name_says_none_and_lines_that_disagree_say_several_and_neither_has_a_current_line(self):
         answers = evals.answers_of(self.ROW)
