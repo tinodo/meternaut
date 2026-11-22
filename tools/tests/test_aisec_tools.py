@@ -748,9 +748,10 @@ class FakeTime:
 
 
 class TheHeldOutRows(unittest.TestCase):
-    """The four rows of other kinds than the host (a firewall, an application gateway and two databases), written on 2026-11-21 from Microsoft's pages and the public price list, after the first candidates of the
-    instructions and tuned on by none: a candidate is promoted only when it is no worse on them than production and better on at least one. What each expects is held here against hand-made answers and the
-    tool's own grade, with no model: a good answer passes, and a decoy, a number outside the range and a number below the floor do not."""
+    """The four rows of other kinds than the host (a firewall, an application gateway and two databases), written on 2026-11-22 from Microsoft's pages and the public price list, after the first candidates of the
+    instructions and tuned on by none: a candidate is promoted only when it is no worse on them than production and better on at least one. Every quote was read on its live page and held to the Study's own check
+    (`verified_quote`), every property that can be set and every range on the reference page of its type, every metric on the page of supported metrics of its type, and every price and rate in the public list of Sweden Central, on that day. What each expects is held here against
+    hand-made answers and the tool's own grade, with no model: a good answer passes, and a decoy, a number outside the range and a number below the floor do not."""
 
     FIREWALL, GATEWAY, DATABASE, BUSY = "heldout-firewall", "heldout-appgw-mincap", "heldout-sql-vcores", "heldout-sql-busy"
     OTHER = [way("Use the Basic tier")]
@@ -774,23 +775,33 @@ class TheHeldOutRows(unittest.TestCase):
         held = [row for row in self.all if row["id"].startswith("heldout-")]
         self.assertEqual([row["id"] for row in held], [self.FIREWALL, self.GATEWAY, self.DATABASE, self.BUSY])
         self.assertEqual(len(self.all), 38, "the 34 rows that candidates were tuned on, and these four")
+        self.assertLessEqual(len(self.all), json.loads((ROOT / "evaluation" / "limits.json").read_text(encoding="utf-8"))["maxRows"], "the cap of the set: two more rows fit, and more need the cap raised on purpose")
         joined = ",".join(row["id"] for row in held)
         self.assertLessEqual(len(joined), 80, "the input evals_only of the Hub takes 80 characters at most, so the four ids are short")
         self.assertRegex(joined, r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(,[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$")
         self.assertEqual([row["kind"] for row in held], ["clean", "clean", "clean", "decoy"])
         self.assertEqual({row["type"] for row in held}, {"microsoft.network/azurefirewalls", "microsoft.network/applicationgateways", "microsoft.sql/servers/databases"}, "kinds that no sentence of the instructions or of a candidate was written for")
         self.assertNotIn("bastion", json.dumps(held).lower(), "not the host that the candidates were tuned on")
+        from cases import library, models, toolbox
+
+        self.assertEqual({row["id"]: (row["metric"], evals._unit(row)) for row in held},
+                         {self.FIREWALL: ("DataProcessed", "Bytes"), self.GATEWAY: ("CapacityUnits", "Count"), self.DATABASE: ("cpu_percent", "Percent"), self.BUSY: ("cpu_percent", "Percent")},
+                         "the column Name in REST API and the column Unit of the pages of supported metrics of the three types (microsoft-network-azurefirewalls-metrics, microsoft-network-applicationgateways-metrics and microsoft-sql-servers-databases-metrics, read on 2026-11-22)")
+        self.assertTrue(all(toolbox.metric_word(row["metric"]) == row["metric"] for row in held), "a name that the real tool would show, as it shows the names of the REST API: the display names (Data processed, CPU percentage) are none of them")
         for row in held:
             with self.subTest(row=row["id"]):
                 self.assertEqual([r["h"] for r in row["resources"]], ["r1"])
                 self.assertTrue(row["knowledge"] and row["meters"] and row["prices"] and row["resources"][0]["sku"], "the pages that were read, the bill, the list of the product and the SKU word")
                 self.assertTrue(all(claim["url"].startswith("https://learn.microsoft.com/en-us/azure/") for claim in row["knowledge"]), "every claim is a sentence of a page of Microsoft's documentation")
+                for claim in row["knowledge"]:
+                    self.assertTrue(claim["kind"] in models.CLAIM_KINDS and library.doc_url(claim["url"]) == claim["url"] and library.QUOTE_FORM.fullmatch(claim["quote"]) and "://" not in claim["quote"],
+                                    f"a claim that the real recall_knowledge would show: {claim['quote'][:50]}")
 
     def test_each_row_expects_the_one_thing_that_its_kind_gives_and_the_limits_and_the_floor_are_those_of_the_pages(self):
         app = evals.app_code()[1]
         firewall, gateway, database, busy = (self.rows[name] for name in (self.FIREWALL, self.GATEWAY, self.DATABASE, self.BUSY))
         self.assertEqual(firewall["expect"], {"propose": [], "never": ["r1"], "others": 1}, "a change that is no delete, one other way, and no setting")
-        self.assertFalse([name for name in firewall["props"]["r1"] if app.countlike(name)], "a firewall of that tier has no count that a setting could lower: its capacity is automatic")
+        self.assertFalse([name for name in firewall["props"]["r1"] if app.countlike(name)], "this firewall shows no count that a setting could lower: the service scales it itself, and the optional minimum and maximum of its capacity units (autoscaleConfiguration on the reference page of the type) are not set on it")
         self.assertEqual(gateway["expect"], {"propose": [], "never": ["r1"], "set": ["r1:autoscaleConfiguration.minCapacity"], "others": 1})
         self.assertEqual(gateway["limits"], {"r1": {"autoscaleConfiguration.minCapacity": {"lowest": 0}, "autoscaleConfiguration.maxCapacity": {"lowest": 2}}}, "what the app's own reader makes of the reference page of the type: Min value = 0 and Min value = 2")
         self.assertEqual((gateway["props"]["r1"]["autoscaleConfiguration.minCapacity"], gateway["props"]["r1"]["autoscaleConfiguration.maxCapacity"]), (10, 20), "a nested count, at the minimum of the autoscale")
@@ -804,18 +815,41 @@ class TheHeldOutRows(unittest.TestCase):
         self.assertEqual((database["resources"][0]["average"], busy["resources"][0]["average"], busy["resources"][0]["max"]), (3, 70, 95), "about 3 percent of the CPU, and about 70 with a peak of 95")
         self.assertEqual(database["resources"][0]["usd"], busy["resources"][0]["usd"], "the bill is the same: 16 vCores for 24 hours at the list price of the vCore")
 
-    def test_the_prices_and_the_bills_are_the_lines_and_the_words_of_the_public_list_of_sweden_central_read_on_2026_11_21(self):
+    def test_the_prices_and_the_bills_are_the_lines_and_the_words_of_the_public_list_of_sweden_central_read_on_2026_11_22(self):
         firewall, gateway, database = (self.rows[name] for name in (self.FIREWALL, self.GATEWAY, self.DATABASE))
         self.assertEqual({line["meter"]: (line["sku"], line["usd"], line["unit"]) for line in firewall["prices"]}, {
-            "Basic Deployment": ("Basic", 0.395, "1 Hour"), "Basic Data Processed": ("Basic", 0.065, "1 GB"), "Standard Deployment": ("Standard", 1.25, "1 Hour"),
-            "Standard Data Processed": ("Standard", 0.016, "1 GB"), "Premium Deployment": ("Premium", 1.75, "1 Hour"), "Premium Data Processed": ("Premium", 0.016, "1 GB")}, "the deployment and the data lines of the three tiers")
+            "Basic Secured Virtual Hub Deployment": ("Basic Secured Virtual Hub", 0.395, "1 Hour"), "Basic Secured Virtual Hub Data Processed": ("Basic Secured Virtual Hub", 0.065, "1 GB"),
+            "Standard Deployment": ("Standard", 1.25, "1 Hour"), "Standard Data Processed": ("Standard", 0.016, "1 GB"), "Premium Deployment": ("Premium", 1.75, "1 Hour"), "Premium Data Processed": ("Premium", 0.016, "1 GB")},
+                         "the deployment and the data lines of the three tiers, as the list of Sweden Central names them: it has no line called Basic Deployment or Basic Data Processed (other regions have), and the Basic lines that it has are those of the firewall's deployment in a hub")
         self.assertEqual([(m["name"], m["unit"], m["per_day"], m["usd_per_unit"]) for m in firewall["meters"]], [("Standard Deployment", "1 Hour", 24, 1.25), ("Standard Data Processed", "1 GB", 6.25, 0.016)])
-        self.assertEqual({line["meter"]: (line["usd"], line["unit"]) for line in gateway["prices"]}, {"Standard Fixed Cost": (0.468, "1/Hour"), "Standard Capacity Units": (0.0144, "1/Hour"), "Standard Captcha Sessions": (0.4, "1K")},
-                         "the whole list of the product of the WAF tier: the lines of the other tiers are lines of other products")
+        self.assertEqual({line["meter"]: (line["sku"], line["usd"], line["unit"]) for line in gateway["prices"]},
+                         {"Standard Fixed Cost": ("Standard", 0.468, "1/Hour"), "Standard Capacity Units": ("Standard", 0.0144, "1/Hour"), "Standard Captcha Sessions": ("Standard", 0.4, "1K"),
+                          "Basic Fixed Cost": ("Basic", 0.02394, "1/Hour"), "Basic Capacity Units": ("Basic", 0.0076, "1/Hour")},
+                         "the three lines of the product of the WAF tier and the two of the Basic tier, a product of its own in the real list; the Standard tier has the same words at other prices (0.26 and 0.008), which a row cannot hold")
         self.assertEqual([(m["name"], m["per_day"], m["usd_per_unit"]) for m in gateway["meters"]], [("Standard Capacity Units", 2400, 0.0144), ("Standard Fixed Cost", 24, 0.468)], "10 instances reserve 100 capacity units, all day")
         self.assertEqual(database["prices"], [{"sku": "vCore", "meter": "vCore", "usd": 0.167439, "unit": "1 Hour"}], "the line of the vCore: the lines of the other sizes and of the serverless compute are named by words that the tools do not show")
         self.assertEqual([(m["name"], m["per_day"], m["usd_per_unit"]) for m in database["meters"]], [("vCore", 384, 0.167439)], "16 vCores for 24 hours")
         self.assertFalse(evals.meter_word("8 vCore"), "a word that is none of the tools' own: the real tool shows no such line, so no row can")
+
+    def test_the_firewall_and_the_gateway_each_leave_a_cheaper_tier_that_the_documentation_names_and_the_list_prices_and_the_apps_own_pricing_counts(self):
+        for row_id, tier, names, claims, saves in (
+                (self.FIREWALL, "Basic Secured Virtual Hub", ("Basic Secured Virtual Hub Deployment", "Basic Secured Virtual Hub Data Processed"),
+                 ("Azure Firewall is available in three SKUs: Basic, Standard, and Premium.",), 615.6),
+                (self.GATEWAY, "Basic", ("Basic Capacity Units", "Basic Fixed Cost"),
+                 ("Application Gateway v2 is available in three SKUs: Basic, Standard_v2, and WAF_v2.",
+                  "Basic (preview): The Basic SKU is designed for applications that have lower traffic and SLA requirements, and don't need advanced traffic management features."), 809.26)):
+            row = self.rows[row_id]
+            held = {(line["sku"], line["meter"]): (handle, line) for handle, line in evals._price_lines(row)}
+            with self.subTest(row=row_id):
+                self.assertLessEqual(set(claims), {item["quote"] for item in row["knowledge"]}, "the documentation names the tier")
+                for place, (meter, name) in enumerate(zip(evals._billed(row), names), 1):
+                    self.assertEqual(held[(tier, name)][1]["unit"], meter["words"][5], f"m{place}: the line of the tier is in the unit of the meter")
+                self.assertLess(held[(tier, names[0])][1]["usd"], next(m["usd_per_unit"] for m in row["meters"] if m["name"] == evals._billed(row)[0]["words"][2]), "the line of the tier costs less than the dearest meter's own")
+                effects = [{"meters": [f"m{place}"], "remains": {"form": "alternative", "price": held[(tier, name)][0]}} for place, name in enumerate(names, 1)]
+                graded = self.grade(row_id, smaller_share("r1", [switching("Use the Basic tier", effects)]))
+                figure = graded["priced"]["others"][0]
+                self.assertEqual((graded["others_found"], graded["ways"], graded["decoys"], "why" in figure), (1.0, 1, 0, False), "the other way is kept, and the app's own pricing gives it a figure from the lines of the list")
+                self.assertAlmostEqual(figure["low"], saves, delta=0.02, msg="the saving that the app counts for the switch, in US dollars a month (the data charge of the firewall's Basic tier is higher, and the app counts no charge that goes up)")
 
     def test_a_good_answer_passes_for_the_firewall_and_a_decoy_does_not(self):
         good = self.grade(self.FIREWALL, smaller_share("r1", self.OTHER))

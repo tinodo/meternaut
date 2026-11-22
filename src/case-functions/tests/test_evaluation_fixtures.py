@@ -960,7 +960,7 @@ class TheStory(Base):
 
     def test_the_held_out_rows_are_shown_as_the_real_toolbox_shows_them_in_their_bill_their_list_and_their_profile(self):
         held = [r for r in ROWS.values() if r["id"].startswith("heldout-") and r.get("meters")]
-        self.assertEqual([r["id"] for r in held], ["heldout-firewall", "heldout-appgw-mincap", "heldout-sql-vcores", "heldout-sql-busy"], "the four rows of other kinds give a bill and a list, as the real words of the list of 2026-11-21 name them")
+        self.assertEqual([r["id"] for r in held], ["heldout-firewall", "heldout-appgw-mincap", "heldout-sql-vcores", "heldout-sql-busy"], "the four rows of other kinds give a bill and a list, as the real words of the list of 2026-11-22 name them")
         for spec in held:
             with self.subTest(row=spec["id"]):
                 box = self.real(spec)
