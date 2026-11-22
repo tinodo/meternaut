@@ -463,12 +463,14 @@ class TheEvaluationFiles(unittest.TestCase):
                 self.assertEqual(round(cost * 100) % evals.DAYS, 0, "every day costs the same, to the cent")
                 self.assertNotIn("history", row, "the cost of a day is the same in every day")
                 if prices:
-                    self.assertEqual(len({meter["subcategory"] for meter in meters}), 1, "the list is the list of one product, which the meters name as their subcategory")
+                    self.assertEqual(len({meter["subcategory"] for meter in meters}), 1, "the meters name one product, which the lines of the list have unless they give another")
                     for line in prices:
-                        self.assertEqual(set(line), set(evals.PRICE_FIELDS))
+                        self.assertEqual(set(line) - {"product"}, set(evals.PRICE_FIELDS))
+                        self.assertNotEqual(line.get("product", "other"), meters[0]["subcategory"], "a line gives its product only when it is not the product of the meters")
+                        self.assertTrue(evals.meter_word(line.get("product", "Product")) == line.get("product", "Product"), "a product that the real tool would show")
                         self.assertTrue(isinstance(line["usd"], (int, float)) and line["usd"] > 0, "a price of nothing is no line of the real list")
                         self.assertTrue(all(evals.meter_word(line[name]) == line[name] for name in ("sku", "meter", "unit")))
-                    self.assertEqual(len({(line["sku"], line["meter"], line["unit"]) for line in prices}), len(prices))
+                    self.assertEqual(len({(line.get("product"), line["sku"], line["meter"], line["unit"]) for line in prices}), len(prices))
 
     def test_what_a_row_expects_of_a_setting_is_a_property_that_the_row_shows_and_that_the_app_would_keep(self):
         from cases import proposals, toolbox
@@ -797,6 +799,14 @@ class TheHeldOutRows(unittest.TestCase):
                     self.assertTrue(claim["kind"] in models.CLAIM_KINDS and library.doc_url(claim["url"]) == claim["url"] and library.QUOTE_FORM.fullmatch(claim["quote"]) and "://" not in claim["quote"],
                                     f"a claim that the real recall_knowledge would show: {claim['quote'][:50]}")
 
+    def test_the_firewall_row_holds_the_sentence_that_a_firewall_moved_to_basic_cannot_return_to_standard_beside_the_two_that_read_as_contradictory_alone(self):
+        claims = self.rows[self.FIREWALL]["knowledge"]
+        self.assertEqual([claim["quote"] for claim in claims if claim["url"].endswith("/firewall/change-sku")],
+                         ["Azure Firewall Basic SKU doesn't support SKU changes on an existing firewall.", "Downgrading from Azure Firewall Premium or Standard to Basic is supported only through PowerShell or Terraform.",
+                          "Upgrading from Basic to Standard isn't supported."],
+                         "the first says that Basic cannot be changed and the second that a downgrade to it is supported: read alone they contradict each other, and the third, of the same paragraph of the page (read on 2026-11-22), says that there is no way back")
+        self.assertEqual((len(claims), evals.KNOWLEDGE_SHOWN), (8, 8), "the eighth claim is the last that recall_knowledge shows of a type")
+
     def test_each_row_expects_the_one_thing_that_its_kind_gives_and_the_limits_and_the_floor_are_those_of_the_pages(self):
         app = evals.app_code()[1]
         firewall, gateway, database, busy = (self.rows[name] for name in (self.FIREWALL, self.GATEWAY, self.DATABASE, self.BUSY))
@@ -820,12 +830,15 @@ class TheHeldOutRows(unittest.TestCase):
         self.assertEqual({line["meter"]: (line["sku"], line["usd"], line["unit"]) for line in firewall["prices"]}, {
             "Basic Secured Virtual Hub Deployment": ("Basic Secured Virtual Hub", 0.395, "1 Hour"), "Basic Secured Virtual Hub Data Processed": ("Basic Secured Virtual Hub", 0.065, "1 GB"),
             "Standard Deployment": ("Standard", 1.25, "1 Hour"), "Standard Data Processed": ("Standard", 0.016, "1 GB"), "Premium Deployment": ("Premium", 1.75, "1 Hour"), "Premium Data Processed": ("Premium", 0.016, "1 GB")},
-                         "the deployment and the data lines of the three tiers, as the list of Sweden Central names them: it has no line called Basic Deployment or Basic Data Processed (other regions have), and the Basic lines that it has are those of the firewall's deployment in a hub")
+                         "the deployment and the data lines of the three tiers, as the list of Sweden Central names them (all 21 of its lines are the product Azure Firewall, the Basic lines of a hub too): it has no line called Basic Deployment or Basic Data Processed, which North Europe has at the same prices (0.395 and 0.065), and the Basic lines that Sweden Central has are those of the firewall's deployment in a hub")
         self.assertEqual([(m["name"], m["unit"], m["per_day"], m["usd_per_unit"]) for m in firewall["meters"]], [("Standard Deployment", "1 Hour", 24, 1.25), ("Standard Data Processed", "1 GB", 6.25, 0.016)])
         self.assertEqual({line["meter"]: (line["sku"], line["usd"], line["unit"]) for line in gateway["prices"]},
                          {"Standard Fixed Cost": ("Standard", 0.468, "1/Hour"), "Standard Capacity Units": ("Standard", 0.0144, "1/Hour"), "Standard Captcha Sessions": ("Standard", 0.4, "1K"),
                           "Basic Fixed Cost": ("Basic", 0.02394, "1/Hour"), "Basic Capacity Units": ("Basic", 0.0076, "1/Hour")},
-                         "the three lines of the product of the WAF tier and the two of the Basic tier, a product of its own in the real list; the Standard tier has the same words at other prices (0.26 and 0.008), which a row cannot hold")
+                         "the three lines of the product of the WAF tier and the two of the Basic tier; the Standard tier has the same words at other prices (0.26 and 0.008) in a product of its own, which this row does not hold")
+        self.assertEqual({line["meter"]: line.get("product") for line in gateway["prices"]}, {"Standard Fixed Cost": None, "Standard Capacity Units": None, "Standard Captcha Sessions": None, "Basic Fixed Cost": "Application Gateway Basic v2",
+                                                                                         "Basic Capacity Units": "Application Gateway Basic v2"},
+                         "the lines of the WAF tier are in the product of the meters (Application Gateway WAF v2) and those of the Basic tier are in a product of their own, as the list of Sweden Central names them")
         self.assertEqual([(m["name"], m["per_day"], m["usd_per_unit"]) for m in gateway["meters"]], [("Standard Capacity Units", 2400, 0.0144), ("Standard Fixed Cost", 24, 0.468)], "10 instances reserve 100 capacity units, all day")
         self.assertEqual(database["prices"], [{"sku": "vCore", "meter": "vCore", "usd": 0.167439, "unit": "1 Hour"}], "the line of the vCore: the lines of the other sizes and of the serverless compute are named by words that the tools do not show")
         self.assertEqual([(m["name"], m["per_day"], m["usd_per_unit"]) for m in database["meters"]], [("vCore", 384, 0.167439)], "16 vCores for 24 hours")
@@ -849,10 +862,70 @@ class TheHeldOutRows(unittest.TestCase):
                 graded = self.grade(row_id, smaller_share("r1", [switching("Use the Basic tier", effects)]))
                 figure = graded["priced"]["others"][0]
                 self.assertEqual((graded["others_found"], graded["ways"], graded["decoys"], "why" in figure), (1.0, 1, 0, False), "the other way is kept, and the app's own pricing gives it a figure from the lines of the list")
-                self.assertAlmostEqual(figure["low"], saves, delta=0.02, msg="the saving that the app counts for the switch, in US dollars a month (the data charge of the firewall's Basic tier is higher, and the app counts no charge that goes up)")
+                self.assertAlmostEqual(figure["low"], saves, delta=0.02, msg=f"{saves} US dollars a month is what the app counts for the switch: " + (
+                    "the saving of the deployment meter alone (720 hours at 1.25 against 0.395). The data meter costs 9.19 more on the Basic tier (187.5 GB at 0.065 against 0.016), which the app does not count: a meter whose "
+                    "alternative is dearer is left out and the figure says so, so the net saving of the switch is 606.41" if row_id == self.FIREWALL else "the saving of both meters, whose lines of the Basic tier are cheaper"))
+
+    def test_the_cheaper_tier_of_the_gateway_is_a_product_of_its_own_so_that_it_is_listed_only_within_the_service_and_the_firewall_and_the_database_have_no_other_product(self):
+        asked = evals.answers_of(self.rows[self.GATEWAY])["price_alternatives"]
+        narrow, wide = asked({"meter": "m1"}), asked({"meter": "m1", "within": "service"})
+        self.assertEqual(([row[1] for row in narrow["rows"]], narrow["same"]["product"], narrow["lines"], narrow["other_units"]), (["Standard Capacity Units", "Standard Fixed Cost"], "Application Gateway WAF v2", 2, 1),
+                         "by default the tool lists the lines of the meter's own product, in its unit: the Basic tier is not among them, and the captcha line is in another unit")
+        self.assertEqual({row[3]: (row[1], row[0]) for row in wide["rows"]}, {"Basic Capacity Units": ("Application Gateway Basic v2", "p1"), "Standard Capacity Units": ("Application Gateway WAF v2", "p2"),
+                                                                           "Basic Fixed Cost": ("Application Gateway Basic v2", "p3"), "Standard Fixed Cost": ("Application Gateway WAF v2", "p4")},
+                         "within the service it lists the lines of every product: the two of the Basic tier, which are priced by the same handles")
+        self.assertEqual(([row[0] for row in narrow["rows"]], wide["lines"], wide["other_units"], wide["current"]), (["p2", "p4"], 4, 1, narrow["current"]), "a line has one handle whichever way it is listed")
+        for row_id in (self.FIREWALL, self.DATABASE):
+            ask = evals.answers_of(self.rows[row_id])["price_alternatives"]
+            for number in range(1, len(self.rows[row_id]["meters"]) + 1):
+                self.assertEqual({**ask({"meter": f"m{number}"}), "within": "service"}, ask({"meter": f"m{number}", "within": "service"}), f"{row_id} m{number}: Sweden Central lists all 21 lines of the firewall "
+                                 "(the Basic lines of a hub too) under the one product Azure Firewall, and the one line of the database's vCore is in the product of its own meter, so asking within the service shows nothing more")
+
+    def switch_to(self, row_id, tier, names, title="Use the Basic tier"):
+        """The other way that switches each meter of the row, in the order of the meters, to the line of the tier that has the name of that charge."""
+        held = {(line["sku"], line["meter"]): handle for handle, line in evals._price_lines(self.rows[row_id])}
+        return switching(title, [{"meters": [f"m{place}"], "remains": {"form": "alternative", "price": held[(tier, name)]}} for place, name in enumerate(names, 1)])
+
+    def replayed(self, row_id, within, *findings):
+        """The verdict of the grader and the block that a replay prints, for an agent that asked the tool for alternatives about the first meter (within the service when `within` says it) and then stated these findings."""
+        row, text = self.rows[row_id], said(*findings)
+        calls = traced(row, ("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m1", **({"within": within} if within else {})}))
+        shown, bill = evals.shown_properties(calls), evals.shown_bill(calls)
+        return evals.grade(row, text, shown, bill), evals.answer_lines(row, text, calls, shown, bill)
+
+    def test_a_good_answer_that_asked_within_the_service_has_its_gateway_way_priced_from_the_list_and_one_that_never_did_has_the_way_and_no_figure_for_it(self):
+        name = "autoscaleConfiguration.minCapacity"
+        basic = self.switch_to(self.GATEWAY, "Basic", ("Basic Capacity Units", "Basic Fixed Cost"))
+        wide, block = self.replayed(self.GATEWAY, "service", self.lowered(self.GATEWAY, name, 10, 2, [basic]))
+        self.assertEqual((wide["set_found"], wide["others_found"], wide["ways"], wide["decoys"], wide["grounded"]), (1.0, 1.0, 1, 0, True))
+        self.assertAlmostEqual(wide["priced"]["others"][0]["low"], 809.26, delta=0.02, msg="the Basic tier priced from its lines of the list, which the call within the service showed")
+        self.assertIn("heldout-appgw-mincap: - other way 1 effect 1: r1, meter m1, form alternative p1; offered for m1 yes; price list read for m1; one meter ok, price ok, tiers ok, service ok, unit ok, name ok; priced alone", block)
+        narrow, block = self.replayed(self.GATEWAY, None, self.lowered(self.GATEWAY, name, 10, 2, [basic]))
+        self.assertEqual((narrow["set_found"], narrow["others_found"], narrow["ways"], narrow["decoys"]), (1.0, 1.0, 1, 0), "the grader counts a way that the app keeps, priced or not: the row has no `miss:` line")
+        self.assertEqual(narrow["priced"]["others"], [{"why": evals.app_code()[0].WHY["alternative"]}], "but the handle of the Basic tier was never shown by the call that never asked within the service, so the way has no figure from the list")
+        self.assertIn("heldout-appgw-mincap: - other way 1 not priced, app key: alternative", block)
+        self.assertIn("offered for m1 no", " ".join(block), "and the block says that the tool did not offer that line for the charge")
+        assumed, _ = self.replayed(self.GATEWAY, None, self.lowered(self.GATEWAY, name, 10, 2, self.OTHER))
+        self.assertEqual((assumed["others_found"], assumed["ways"], assumed["priced"]["others"][0].get("estimate")), (1.0, 1, True), "a way that states a share of its own is kept as an estimate, and no list prices it")
+
+    def test_a_good_answer_for_each_of_the_three_kinds_that_asked_within_the_service_passes_as_it_did_and_the_firewalls_basic_lines_are_in_its_own_product_so_the_default_call_prices_them_too(self):
+        name = "autoscaleConfiguration.minCapacity"
+        hub = ("Basic Secured Virtual Hub Deployment", "Basic Secured Virtual Hub Data Processed")
+        for row_id, finding, wanted in ((self.FIREWALL, smaller_share("r1", [self.switch_to(self.FIREWALL, "Basic Secured Virtual Hub", hub)]), {"others_found": 1.0}),
+                                        (self.GATEWAY, self.lowered(self.GATEWAY, name, 10, 2, self.OTHER), {"set_found": 1.0, "others_found": 1.0}),
+                                        (self.DATABASE, self.lowered(self.DATABASE, "sku.capacity", 16, 8, self.OTHER), {"set_found": 1.0, "others_found": 1.0})):
+            with self.subTest(row=row_id):
+                for within in ("service", None):
+                    graded, block = self.replayed(row_id, within, finding)
+                    self.assertEqual({key: graded[key] for key in wanted}, wanted)
+                    self.assertEqual((graded["decoys"], graded["grounded"], graded["ways"]), (0, True, 1))
+                    self.assertFalse([line for line in block if "dropped" in line], block)
+        graded, block = self.replayed(self.FIREWALL, None, smaller_share("r1", [self.switch_to(self.FIREWALL, "Basic Secured Virtual Hub", hub)]))
+        self.assertEqual(("why" in graded["priced"]["others"][0], graded["priced"]["others"][0].get("skipped")), (False, 1), "priced by the default call, from lines of the same product: one charge is not counted, the data charge, which the call did not ask about and which is dearer on the Basic tier")
 
     def test_a_good_answer_passes_for_the_firewall_and_a_decoy_does_not(self):
         good = self.grade(self.FIREWALL, smaller_share("r1", self.OTHER))
+
         self.assertEqual((good["others_found"], good["ways"], good["settings"], good["decoys"], good["grounded"]), (1.0, 1, 0, 0, True))
         self.assertEqual(self.grade(self.FIREWALL, smaller_share("r1"))["others_found"], 0.0, "a change with no other way is not what the row expects")
         self.assertEqual(self.grade(self.FIREWALL, self.delete(self.FIREWALL))["decoys"], 1, "a firewall that processes data is never deleted")
@@ -1168,7 +1241,7 @@ class TheEvaluations(unittest.TestCase):
         self.assertRegex(out, r"PASS settingFoundRate 1\.00 \(at least 0\.5\)")
         self.assertRegex(out, r"PASS expectedFoundRate 1\.00 ")
         # Nine rows ask. Five are the host with four units: two of the host that a few use (with and without the limits that the page gives), the row of its whole story and the row of its floor in the
-        # documentation ask for a setting, and the row of the host in use asks for none; four settings and one other way (the whole story) are kept. The four held-out rows of other kinds (2026-11-21) add
+        # documentation ask for a setting, and the row of the host in use asks for none; four settings and one other way (the whole story) are kept. The four held-out rows of other kinds (2026-11-22) add
         # the firewall (one other way, no setting), the gateway and the database (one setting and one other way each) and the busy database (none): six settings kept, four other ways kept.
         self.assertIn("run: settings kept 6, other ways kept 4, in 9 fixtures that ask for a setting", out)
         self.assertNotIn("miss:", out)
@@ -1918,6 +1991,35 @@ class TheBillOfAHost(unittest.TestCase):
         dearer = answers["price_alternatives"]({"meter": "m2"})["current"]
         self.assertEqual(dearer, {"line": "p4", "retail": 3, "paid": 2, "rate_ratio": 0.6667}, "the bill pays two thirds of the list price of this meter")
         self.assertEqual(answers["price_alternatives"]({"meter": "m1", "within": "service"})["within"], "service")
+
+    TWO = invented([meter("Big Units", 10, 2.0), meter("Per GB", 2, 3.0, "1 GB")],
+                   [listed("Plus", "Big Units", 3.0), listed("Plus", "Per GB", 3.5, "1 GB"),
+                    *({**listed(sku, name, usd, unit), "product": "Lite Tier"} for sku, name, usd, unit in (("Lite", "Big Units", 1.0, "1 Hour"), ("Lite", "Lite Units", 0.5, "1 Hour"), ("Lite", "Lite GB", 0.2, "1 GB")))])
+
+    def test_a_call_lists_the_lines_of_the_meters_product_and_those_of_every_product_only_within_the_service_and_a_line_has_one_handle_either_way(self):
+        answers = evals.answers_of(self.TWO)
+        narrow, wide = answers["price_alternatives"]({"meter": "m1"}), answers["price_alternatives"]({"meter": "m1", "within": "service"})
+        self.assertEqual((narrow["within"], narrow["lines"], narrow["other_units"], [row[0] for row in narrow["rows"]], narrow["current"]["line"]), ("product", 1, 1, ["p3"], "p3"),
+                         "the real tool reads the lines of the meter's product alone, and counts those: the other product is not read, so it is not counted either")
+        self.assertNotIn("Lite", json.dumps(narrow), "no word of the other product shows")
+        self.assertEqual((wide["within"], wide["lines"], wide["other_units"], [row[0] for row in wide["rows"]], wide["current"]["line"], wide["match"]), ("service", 3, 2, ["p1", "p2", "p3"], "p3", "found"),
+                         "within the service the lines of every product are read, and the line of the same name in the other product does not make the lines disagree: the line of the meter is matched by its product too")
+        self.assertEqual(([row[1] for row in wide["rows"]], [row[3] for row in wide["rows"]]), (["Lite Tier", "Lite Tier", "Standard Tier"], ["Lite Units", "Big Units", "Big Units"]), "the product is a column when the lines differ in it")
+        self.assertEqual(wide["current"], narrow["current"], "the rate that the bill paid against the list price of the meter's own line is the same whichever way the list is asked")
+        second_narrow, second_wide = answers["price_alternatives"]({"meter": "m2"}), answers["price_alternatives"]({"meter": "m2", "within": "service"})
+        self.assertEqual(([row[0] for row in second_narrow["rows"]], [row[0] for row in second_wide["rows"]], second_wide["other_units"]), (["p5"], ["p4", "p5"], 3), "the unit of the second meter: the lines of its own product, and then of the service")
+        plain = evals.answers_of(self.ROW)["price_alternatives"]
+        self.assertEqual({**plain({"meter": "m1"}), "within": "service"}, plain({"meter": "m1", "within": "service"}), "lines that name no product are all of the meters' product: a row that gives none has one view of its list")
+
+    def test_a_line_of_another_product_is_offered_to_a_switch_only_when_a_call_within_the_service_showed_it(self):
+        pricing = evals.app_code()[0]
+        lite = next(handle for handle, line in evals._price_lines(self.TWO) if line["meter"] == "Lite Units")
+        for within, offered in ((None, False), ("service", True)):
+            calls = traced(self.TWO, ("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m1", **({"within": within} if within else {})}))
+            market = evals._market(self.TWO, pricing, evals.shown_bill(calls), {})
+            with self.subTest(within=within):
+                self.assertEqual((lite in market.offers["m1"], market.retail["m1"], market.prices[lite].product, market.prices["p3"].product), (offered, 3.0, "Lite Tier", "Standard Tier"))
+        self.assertIn(lite, evals._market(self.TWO, pricing, None, {}).offers["m1"], "with no replay every line of the unit counts, as it always did")
 
     def test_a_meter_that_has_no_line_of_its_name_says_none_and_lines_that_disagree_say_several_and_neither_has_a_current_line(self):
         answers = evals.answers_of(self.ROW)
