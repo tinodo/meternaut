@@ -21,6 +21,7 @@ from . import costs as cost_words
 from . import estimate as estimates
 from . import pricing
 from .twopeople import confirmations, counts, needs, standing
+from .families import words as family_words  # the words of the family that lowers a number: its level of risk is the one that advice about the same act uses
 from .families.words import TYPE_WORDS, also_changed, called_of, kinds, shown, type_noun, type_of, words_of  # called_of, also_changed and kinds are also read by the pages, which know the brief and the records and nothing else
 from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVISE, ADVISOR, AUTOMATED, COST_AT_ASK, COST_SEEN, GROUP_FACT, HELD, INVESTIGATION, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord,
                      CaseRecord, DecisionRecord, PlanRecord, Readiness, started)
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
-RISK_CHARS = 800  # the most characters of "What could go wrong" that code can make: a reason (at most 100), two measurements (at most 215 and 185) and what the second AI doubts (22 and MAX_REASON): a card and a letter have room for all of it, and a text of a change is cut only at the end of a sentence
+RISK_CHARS = 800  # the most characters of "What could go wrong" that code can make: two measurements (at most 215 and 185) and what the second AI doubts (22 and MAX_REASON): a card and a letter have room for all of it, and a text of a change is cut only at the end of a sentence
 ASKED_CHARS = 480  # the room that a card and a letter have for the question ("You are asked whether to let Meternaut scale down the virtual machine scale set x in resource group g by lowering ..."): a name of 80 characters, a group of 90 and three settings need about 360
 UNDO_CHARS = 260  # the room that a card and a letter have for an undo: the longest that was measured is 257 characters (the undo of a disk plan with the longest tier name), a gateway of a hub gives up to 195; the brief holds at most 300 of a plan's
 MAX_NAME = 120
@@ -197,7 +198,7 @@ DISK_TYPES = {"standard_lrs": "Standard HDD (LRS)", "standardssd_lrs": "Standard
 # The words of each family (what changes, what is read again, what could go wrong, and whether it can be undone) are the family's own, in cases/families/words.py, which holds no way to
 # reach Azure: the families feed this brief, so that a page, a letter and a card show a new family without a line of its own here. Who acts is the same for every family, and a page says it
 # once, in these words: no button and no line of an approval repeats that the person signs in to Azure (the person does, when Azure asks).
-WHO_ACTS = ("You do it, with your own permissions. When you approve, Azure checks your rights, starts the change right then and may need a few minutes to finish it. "
+WHO_ACTS = ("Meternaut makes the change, with your own permissions. When you approve, Azure checks your rights, starts the change right then and may need a few minutes to finish it. "
             "Meternaut holds no right of its own to change anything.")
 TWO_PEOPLE = "Two people approve this. One confirms the request, and then another approves it."
 # What a request that needs two people says, by where it stands for the person who reads it (cases/twopeople.py). A letter has no reader that it knows, so it says TWO_PEOPLE only.
@@ -211,7 +212,6 @@ SECOND_WORDS = {
 }
 ADVICE_CHANGE = "Meternaut changes nothing in Azure. Your answer is recorded with your name."
 ADVICE_WHO = "If you act, you do it yourself in Azure with your own rights."
-NO_HISTORY = "There is no history of cases like this yet."  # what the page and the card say when too few like it were answered; a letter, which is read once, leaves it out
 ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."  # what the plan of an advice keeps in its record: no page, letter or card shows it, because advice changes nothing
 # What an answer does to advice that the investigation made, for the kind of change that it is: the finding proposes a setting and Meternaut cannot make that change (its reason is a sentence of
 # proposals.CANNOT); it is a reduction of a count and the AI named no setting that Meternaut could check (it named none, or code dropped what it named), so there is nothing for Meternaut to change, or it
@@ -1023,12 +1023,25 @@ def acting_risk(case: CaseRecord | None) -> Risk:
     removes = verb in (VERBS["delete"], CHANGE_VERBS["remove"], LOOK)  # a title that deletes, removes or asks whether the resource is used: the use of the resource is what is at stake
     level = "high" if others and not proven else "medium"
     if case.detector == INVESTIGATION:
-        doubt = doubt_of(case)
-        noun = kind_words(case.resource_type, case.resource_id)[1]
-        reason = f"Other resources can depend on {'them' if group is not None else f'a {noun}'}." if level == "high" else ""  # the reason for the chip: the kind is one that others share, and no measurement shows that nothing uses it
-        return Risk(level, " ".join(part for part in (reason, use_words(case), f'The second AI says: "{doubt}"' if doubt else "") if part), True)
+        from . import proposals
+
+        if group is None and proposals.settings(case.facts):
+            level = family_words.setting_level()  # a finding that carries a setting is the act that the family lowering a number makes: it has that family's level, so the risk does not change with the owner's gate
+        # What could go wrong is said from the facts of the finding: what was measured of the use, and what the second AI doubts. No sentence made from the kind of the resource alone: it would read the same for every request about it.
+        return Risk(level, " ".join(part for part in (use_words(case), doubt_said(doubt_of(case))) if part), True)
     parts = ([UNPROVEN] if removes and _idle(case) and not proven else []) + ([SHARED_RISK] if others else [])
     return Risk(level, " ".join(parts or [RARE_USE if proven and removes else CHANGE_RISK]), True)
+
+
+def doubt_said(doubt: str) -> str:
+    """What the second AI doubts, as one sentence that marks the words as its own: `The second AI says: "..."`. The same sentence in the risk of advice, on the card and in the letter of a change; empty when it raised none."""
+    return f'The second AI says: "{doubt}"' if doubt else ""
+
+
+def doubt_line(brief: "Brief") -> str:
+    """The sentence of what the second AI doubts that a card and a letter of a change add under "What could go wrong": the words of the family that makes the change say what Meternaut does not know, and
+    nothing of what this second AI doubted, which "The second AI agreed, with a caution." says that there is. Empty when it raised no objection, and for advice, whose risk says it already."""
+    return doubt_said(brief.doubt) if brief.doubt and brief.doubt not in brief.risk.text else ""
 
 
 def use_words(case: CaseRecord) -> str:
@@ -1045,7 +1058,7 @@ def use_words(case: CaseRecord) -> str:
     sentences = []
     for place, fact in enumerate(facts):
         shows = "it either" if place else f"what depends on {'them' if many else 'it'}"
-        sentences.append(f"the {fact.label} metric was {covered(fact.value)}, which does not show {shows}.")
+        sentences.append(f"the {fact.label} metric was {fact.value}, which does not show {shows}.")
     first = f"For the first of them, {sentences[0]}" if many else f"{sentences[0][:1].upper()}{sentences[0][1:]}"
     return " ".join([first, *(f"{said[:1].upper()}{said[1:]}" for said in sentences[1:])])
 
@@ -1233,14 +1246,14 @@ def _metrics(case: CaseRecord) -> dict:
 def past_line(digest: object) -> str:
     """The one line of a brief about how past requests like this were answered: "Of 4 past cases like this, 3 were approved. Savings came in at 92 percent of the estimate." The digest is what
     cases/learning.py keeps in `CaseRecord.learned["past"]`: n (the requests that a person answered), approved, `enough` (n is at least the smallest sample), ratio (what the cost lines
-    showed as a share of what was predicted, when enough changes have both) and boomerangs. Without enough it says that there is no history yet; for a case that has no record of its
-    past at all (it was found before there was one) there is no line."""
+    showed as a share of what was predicted, when enough changes have both) and boomerangs. Without enough there is no line: with no history there is nothing to say, and nothing is said (no
+    "there is no history" for a page, a card or a letter to carry). For a case that has no record of its past at all (it was found before there was one) there is no line either."""
     if not isinstance(digest, dict):
         return ""
     answered, approved = digest.get("n"), digest.get("approved")
     whole = isinstance(answered, int) and isinstance(approved, int) and not isinstance(answered, bool) and not isinstance(approved, bool)
     if digest.get("enough") is not True or not whole or not 0 <= approved <= answered:
-        return NO_HISTORY
+        return ""
     text = f"Of {answered} past case{'' if answered == 1 else 's'} like this, {approved} {'was' if approved == 1 else 'were'} approved."
     ratio = _figure(digest.get("ratio"))
     if ratio is not None and ratio >= 0:
@@ -1778,7 +1791,8 @@ def _metric_facts(case: CaseRecord) -> list[Fact]:
         value = f"{amount} in {days_text(days)}" if days_text(days) else f"{amount} in the period measured"
         if days_text(days) and isinstance(seen.get(name), int) and not isinstance(seen.get(name), bool):
             value += f", with a value on {seen[name]} of those days"
-        rows.append(Fact(text_of(name, 60), value, f"{MONITOR}, {days_text(days)}" if days_text(days) else MONITOR))
+        # The days that had a value are said only when they are not every day of the window (covered): this is the one place that makes the value, so the page, the card, the letter and the sentence about what could go wrong read it one way.
+        rows.append(Fact(text_of(name, 60), covered(value), f"{MONITOR}, {days_text(days)}" if days_text(days) else MONITOR))
     return rows
 
 

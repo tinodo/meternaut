@@ -183,7 +183,7 @@ def _happens(brief: Brief) -> Safe:
         if not _here(brief):
             return Safe("")  # nobody can answer it any more: what became of it is said above
         how = [quoted(f"What the AI says you could do. {UNCHECKED}", brief.how)] if brief.how else []
-        risk = [fmt("<p><strong>What could go wrong.</strong> {text}</p>", text=brief.risk.text)] if brief.risk.acting else []
+        risk = [fmt("<p><strong>What could go wrong.</strong> {text}</p>", text=brief.risk.text)] if brief.risk.acting and brief.risk.text else []  # a request that has nothing to say here says nothing: no label over an empty line
         return fmt('<section aria-labelledby="happens-title"><h2 id="happens-title">What happens if you answer</h2>{lines}</section>', lines=join([paragraph(f"{brief.change} {brief.who_acts}"), *how, *risk]))
     heading = ("If you approve" if brief.state == "open" else "What the change is") if brief.kind == "change" else "What changes"
     if brief.ready is not None and brief.ready.state == REFUSED and brief.kind == "change":

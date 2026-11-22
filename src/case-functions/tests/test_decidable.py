@@ -487,7 +487,8 @@ GREW = {  # the kinds whose letter is longer than it was on main, by how many wo
 
 
 class AMeasurementSaysOnHowManyDaysItHadAValueOnlyWhenNotEveryDayDid(unittest.TestCase):
-    """A zero that a tool measured over 30 days needs a value on only 20 of them, so a letter that says "0 in 30 days" says more than was measured: it says the days when they are fewer than the period."""
+    """A zero that a tool measured over 30 days needs a value on only 20 of them, so a letter that says "0 in 30 days" says more than was measured: it says the days when they are fewer than the period.
+    The page, the card, the letter and the sentence about what could go wrong say it one way: one fact does not read two ways."""
 
     @staticmethod
     def row(days_with_a_value: int) -> str:
@@ -500,9 +501,23 @@ class AMeasurementSaysOnHowManyDaysItHadAValueOnlyWhenNotEveryDayDid(unittest.Te
         self.assertEqual(self.row(30), "Total Calls: 0 in 30 days")
         self.assertEqual(self.row(20), "Total Calls: 0 in 30 days, 20 of them with a value")
 
-    def test_a_letter_that_always_leaves_them_out_says_a_zero_of_30_days_for_a_zero_of_20(self):
-        with mock.patch.object(letters, "_read", lambda value: value.partition(", with a value")[0]):  # what it said before
+    def test_a_fact_that_always_leaves_them_out_says_a_zero_of_30_days_for_a_zero_of_20(self):
+        with mock.patch.object(brief_mod, "covered", lambda value: value.partition(", with a value")[0]):  # what it said before
             self.assertEqual(self.row(20), "Total Calls: 0 in 30 days")
+
+    def test_one_measurement_reads_one_way_on_the_page_the_card_the_letter_and_the_sentence_about_what_could_go_wrong(self):
+        # The page and the card said "0 in 30 days, with a value on 30 of those days" for a value on every day, where the letter and the sentence about what could go wrong said "0 in 30 days".
+        for days, said in ((30, "0 in 30 days"), (20, "0 in 30 days, 20 of them with a value")):
+            kind = _deleting()
+            kind = dataclasses.replace(kind, name=f"{kind.name}, a value on {days} days", case=dataclasses.replace(kind.case, facts={**kind.case.facts, "metricDaysWithData": {"Total Calls": days}}))
+            for surface, shown in surfaces(kind).items():
+                with self.subTest(days=days, surface=surface):
+                    text = " ".join(block.text for block in shown.blocks)
+                    self.assertIn(f"{said}", text)
+                    self.assertNotIn("with a value on", text, "the old reading of the same fact")
+                    self.assertEqual(text.count("with a value"), 0 if days == 30 else text.count(said), "the days of a value are said when they are fewer than the days of the period, and only then")
+            with self.subTest(days=days, surface="what could go wrong"):
+                self.assertIn(f"The Total Calls metric was {said}, which does not show what depends on it.", brief_mod.acting_risk(kind.case).text)
 
 
 class TheFirstOfTwoPeopleIsAskedToConfirmAndTheSecondToApprove(unittest.TestCase):

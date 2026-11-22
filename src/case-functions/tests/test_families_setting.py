@@ -1441,9 +1441,11 @@ class TheRealChangeAsksOnceMore(unittest.TestCase):
         self.assertIn("This is the gateway gw-one in resource group rg-owner-real", reply.main.text())
         text = reply.main.text()
         self.assertIn("This changes a real resource. Nothing is changed until you confirm here.", text)
-        self.assertEqual([p.text() for p in reply.main.find_all("p", class_="notice-title")], ["This changes a real resource"])
+        self.assertEqual(text.count("This changes a real resource"), 1, "said once: the lead says it, and the notice under it does not say it again")
+        self.assertEqual([p.text() for p in reply.main.find_all("p", class_="notice-title")], ["What could go wrong"], "the notice is titled by what it holds, the risk")
         self.assertIn("Meternaut does not know what a lower number takes away", reply.main.find("div", class_="notice warning").text())
-        self.assertNotIn("cannot be undone", text)
+        self.assertNotIn("cannot be undone", reply.content, "the whole page, the foot included: this change can be undone")
+        self.assertIn("You see this because you asked to approve a change to a real resource, and every change to a real resource asks once more.", reply.content, "the foot says what is true of this request")
         self.assertEqual((console.delegate.begins, console.delegate.finishes), ([], []))
         self.assertEqual(world.store.decisions_of_plan(plan.plan_id), [])
         (back,) = [a for a in reply.main.find_all("a") if a.text() == "No, go back"]

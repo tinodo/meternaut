@@ -677,7 +677,15 @@ class TheRiskFollowsTheVerbOfTheTitle(unittest.TestCase):
         # What was seen: the guard of cases/investigate.py (_hold_delete) holds only a proposal to delete, so a typed removal of a private endpoint is still titled "Remove ...".
         case = self.case("remove", "microsoft.network/privateendpoints", "oversized")
         self.assertTrue(headline_of(ADVISE, "pe-1", "rg-a", case.resource_type, "change", case=case).startswith("Remove the private endpoint"))
-        self.assertEqual(brief.acting_risk(case), brief.Risk("high", "Other resources can depend on a private endpoint. " + self.NOTHING_MEASURED, True), "the chip has its reason: the kind is one that others share")
+        self.assertEqual(brief.acting_risk(case), brief.Risk("high", self.NOTHING_MEASURED, True), "the chip says what nothing measured and what the second AI doubts, and no sentence that the kind of resource alone would make")
+        self.assertNotIn("Other resources can depend", brief.acting_risk(case).text, "that is said of every private endpoint: it carries no fact of this request")
+
+    def test_what_could_go_wrong_is_never_a_sentence_made_from_the_kind_of_resource_alone(self):
+        # "Other resources can depend on a bastion host." was said of every bastion host, and so of no request in particular: the risk says what was measured of this resource and what the second AI doubts.
+        for kind in brief.SHARED:
+            with self.subTest(kind=kind):
+                risk = brief.acting_risk(self.case("remove", kind, "oversized"))
+                self.assertEqual((risk.level, risk.text), ("high", self.NOTHING_MEASURED))
 
     def test_a_request_of_an_older_check_keeps_the_sentences_that_it_always_said(self):
         older = make_case(detector="orphan-private-endpoint", recommendation="delete", resource_type="microsoft.network/privateendpoints")
@@ -969,6 +977,10 @@ class WhatTheModuleIs(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 if node.level == 1 and node.module is None:
                     self.assertLessEqual({a.name for a in node.names}, pure)
+                elif node.level == 1 and node.module == "families":
+                    # `from .families import words`: the same module as `families.words`, imported as a module so that the risk of advice asks the one function that the words of the family that lowers a
+                    # number ask (`words.setting_level`) at the time it is asked, and a single replacement of it changes both
+                    self.assertEqual({a.name for a in node.names}, {"words"})
                 elif node.level == 1:
                     self.assertIn(node.module, ("models", "families.words", "twopeople"), "the words of the families and the stages of two people are modules that hold no way to reach Azure (next tests)")
                 else:

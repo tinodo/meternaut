@@ -22,8 +22,8 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import (ADVISOR_SHORT, ASKED_CHARS, CHECK_FIRST_SHORT, HEADS_UP, MONTH_NAMES, PAUSED_ADVICE, PAUSED_CHANGES, RISK_CHARS, TWO_PEOPLE, UNDO_CHARS, WHY_APPROVER, Brief, called_of, footer_line,
-                    others_line, parse_time, plain,
+from .brief import (ADVISOR_SHORT, ASKED_CHARS, CHECK_FIRST_SHORT, HEADS_UP, MONTH_NAMES, PAUSED_ADVICE, PAUSED_CHANGES, RISK_CHARS, TWO_PEOPLE, UNDO_CHARS, WHY_APPROVER, Brief, called_of, doubt_line,
+                    footer_line, others_line, parse_time, plain,
                     plain_sentences, shown_facts)
 from .stake import NOTE_CHARS, chips_of, place_of, stake_of, title_text
 
@@ -175,11 +175,13 @@ def _decision_lines(brief: Brief) -> list[dict]:
     Azure and, when acting has a risk, what it is: one block each."""
     owner = _block("owner", f"**Whose is it:** {md(brief.owner.text, 200)}")
     if brief.kind == "advice":
-        return [_block("change", f"**If you answer:** {md(brief.change, 300)} {md(brief.who_acts, 300)}"), *([_block("risk", f"**What could go wrong:** {md(brief.risk.text, RISK_CHARS)}")] if brief.risk.acting else []), owner]
+        return [_block("change", f"**If you answer:** {md(brief.change, 300)} {md(brief.who_acts, 300)}"), *([_block("risk", f"**What could go wrong:** {md(brief.risk.text, RISK_CHARS)}")] if brief.risk.acting and brief.risk.text else []), owner]
     two = brief.second.line if brief.second is not None else TWO_PEOPLE if brief.two_people else ""
     said = brief.change_short or brief.change  # a family that has short words for a card keeps in them the sentence that says that nothing else is promised: it is never the one that a cut drops
     change = md(plain_sentences(said, 300), 300) + ("" if "own permissions" in said else " It runs with your own permissions.") + (f" {md(two, 320)}" if two else "")
-    return [_block("change", f"**If you approve:** {change}"), _undo(brief), _block("risk", f"**What could go wrong:** {md(plain_sentences(brief.risk.text, 240), 240)}"), owner]
+    doubt = doubt_line(brief)  # what the second AI doubts, which "The second AI agreed, with a caution." of the confidence says that there is: as advice says it, under what could go wrong
+    risk = md(plain_sentences(brief.risk.text, 240), 240) + (f" {md(doubt, RISK_CHARS)}" if doubt else "")
+    return [_block("change", f"**If you approve:** {change}"), _undo(brief), _block("risk", f"**What could go wrong:** {risk}"), owner]
 
 
 def _page_set(title: str, ctx: CardContext, *, positive: bool = False) -> dict:

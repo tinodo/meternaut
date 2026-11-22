@@ -379,6 +379,13 @@ def also_changed(paths: str) -> str:
     return f"Azure also changed the {'numbers or flags' if many else 'number or flag'} at {paths.rstrip('.')}."
 
 
+def setting_level() -> str:
+    """The level of the risk of lowering a number of a resource, which the words of the family that makes the change and the advice about the same finding both ask: the same act carries the same
+    risk whether Meternaut may make it (the owner's gate is open) or only says it (the gate is closed), so opening or closing a gate never changes the risk that a person is told. It names no kind of
+    resource and no setting."""
+    return "medium"
+
+
 def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) -> Words:
     """The words of a plan of `change-setting`, from the kind of the resource, its name and group, and the target and the preconditions of the plan. The pages, the cards, the letters and the record of the
     plan read this one text, so that what a person is shown is what is kept."""
@@ -407,7 +414,7 @@ def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) ->
               + (f"{cited}, and Meternaut checked that no lock is on the {kind}. " if cited else f"No measurement of its use is cited. It checked that no lock is on the {kind}. ")
               + f"Azure carries out the update in the background and may need minutes: Meternaut follows it for half a minute, and a later check reads the {kind} again. "
               f"If your account may not change the {kind}, Azure refuses and nothing changes."),
-        level="medium",
+        level=setting_level(),
         undo=(f"Set {back} again: on the page of the {kind} in the Azure portal, or with {command}. That update takes minutes too and needs the same right. "
               "Setting it back does not bring back what the lower number cut off meanwhile."),
         reversible=True, short_undo=short, confirm=True, ask=f"scale down the {kind} {thing} in resource group {group} by lowering {said}",

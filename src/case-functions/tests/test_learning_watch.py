@@ -167,9 +167,21 @@ class TheLineOnEveryRender(unittest.TestCase):
                 for private in ("calibrat", "lesson", "boomerang", "digest", "learned"):
                     self.assertNotIn(private, text.lower())
 
-    def test_the_page_of_a_case_with_no_history_yet_says_so_in_the_same_one_line(self):
-        console = self.console_with(past={"n": 1, "approved": 1, "enough": False, "boomerangs": 0})
-        self.assertIn("There is no history of cases like this yet.", console.get("/ok/plan0002").content)
+    def test_the_page_the_card_and_the_letter_of_a_case_with_no_history_yet_say_nothing_of_it(self):
+        # They said "There is no history of cases like this yet." on every request without a past: a sentence that fitted any request. The line of the past is there only when there is one.
+        thin = {"n": 1, "approved": 1, "enough": False, "boomerangs": 0}
+        console = self.console_with(past=thin)
+        for path in ("/ok/plan0002", "/why/case0002"):
+            text = console.get(path).content.lower()
+            self.assertNotIn("cases like this", text, path)
+            self.assertNotIn("no history", text, path)
+        brief = build_brief(card_case(learned={"past": thin}), make_advice_plan(), None, [], now=CARD_NOW, may_answer=True)
+        self.assertFalse([text for text in texts(cards.decision_card(brief, ctx_for(brief))) if "cases like this" in text or "no history" in text.lower()])
+        person = Person("aaaaaaaa-1111-4222-8333-444444444444", "Tino", ("owner", "approver", "ops"), "tino@example.com")
+        letter = letters.approval_letter(make_advice(), make_advice_case(learned={"past": thin}), person, BASE, WEB_NOW)
+        for text in (letter.text, letter.html):
+            self.assertNotIn("cases like this", text)
+            self.assertNotIn("no history", text.lower())
 
     def test_the_page_says_nothing_of_a_past_for_a_case_that_holds_no_record_of_one(self):
         console = self.console_with()

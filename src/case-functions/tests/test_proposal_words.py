@@ -445,20 +445,41 @@ class WhatHappensIfYouAnswer(unittest.TestCase):
         self.assertEqual(risk.text, brief_mod.NO_FINDING)
         self.assertNotIn("measured", risk.text)
 
-    def test_a_high_risk_has_its_reason_next_to_it_and_a_medium_one_does_not_borrow_it(self):
+    def test_a_high_risk_says_what_was_measured_and_no_sentence_that_the_kind_of_resource_alone_would_make(self):
         facts = {**gateway_facts(), "metrics": {"Sessions": 4.0}}
         case, plan = gateway(facts=facts, resource_type="microsoft.network/privateendpoints")
         risk = brief_of(case, plan).risk
         self.assertEqual(risk.level, "high")
-        self.assertTrue(risk.text.startswith("Other resources can depend on a private endpoint. The Sessions metric was 4"), risk.text)
+        self.assertTrue(risk.text.startswith("The Sessions metric was 4"), risk.text)
+        self.assertNotIn("Other resources can depend", risk.text, "that sentence was made of the kind alone, and so it fitted every private endpoint")
         quiet = dataclasses.replace(case, resource_type="microsoft.example/gateways")
         self.assertEqual(brief_of(quiet, plan).risk.level, "medium")
-        self.assertNotIn("Other resources can depend", brief_of(quiet, plan).risk.text)
+        self.assertEqual(brief_of(quiet, plan).risk.text, risk.text, "the words are those of the request and do not change with the level")
         group = {"count": 3, "groups": 2, "type": "microsoft.network/privateendpoints", "names": ["a", "b"], "costUsd30d": 60.0}
         many, plan = gateway(facts={**facts, GROUP_FACT: group}, resource_type="microsoft.network/privateendpoints")
-        self.assertTrue(brief_of(many, plan).risk.text.startswith("Other resources can depend on them. For the first of them, the Sessions metric was 4"), brief_of(many, plan).risk.text)
+        self.assertTrue(brief_of(many, plan).risk.text.startswith("For the first of them, the Sessions metric was 4"), brief_of(many, plan).risk.text)
         with mock.patch.object(brief_mod, "shared", lambda kind: False):
-            self.assertEqual(brief_of(case, plan).risk.level, "medium", "the level and the reason come from the same rule")
+            self.assertEqual(brief_of(case, plan).risk.level, "medium", "the level follows the rule that says whether others share the kind")
+
+    def test_a_change_says_what_the_second_ai_doubts_on_its_card_and_in_its_letter_as_advice_does_and_nothing_says_it_twice(self):
+        # The card of a change said "The second AI agreed, with a caution." and never what the caution was; the letter of a change said nothing of it, and the page had it only in a quote lower down.
+        said = f'The second AI says: "{DOUBT}"'
+        case, plan = a_change()
+        already = dataclasses.replace(plan, could_go_wrong=f"Connections that need more than 2 units are refused. {said}")  # words of a plan that say it themselves
+        for kind, (case, plan) in {"a change": (case, plan), "a change whose words say it already": (case, already), "advice": gateway(SETTING)}.items():
+            b = brief_of(case, plan)
+            self.assertEqual(b.doubt, DOUBT)
+            self.assertIn("The second AI agreed, with a caution.", b.confidence.because, kind)
+            shown = surfaces(case, plan)
+            for surface in ("card", "letter"):
+                with self.subTest(kind, surface=surface):
+                    self.assertEqual(read(shown[surface]).count(said), 1, "what the caution is, in the second AI's own words and marked as its own, and once")
+            if kind != "a change whose words say it already":  # the page puts the doubt in a quote of its own when it is not in the risk (and, for advice that is closed, where the risk is not shown)
+                self.assertEqual(" ".join(block.text for block in shown["page"].blocks if not block.details).count(DOUBT), 1, f"{kind}: the page says it once, under what could go wrong or as a quote of the second AI")
+        case, plan = a_change()
+        quiet = dataclasses.replace(case, objections=(), learned={})
+        for surface, one in surfaces(quiet, plan).items():
+            self.assertNotIn("The second AI says", read(one), f"{surface}: no caution, so none is stated")
 
     def test_the_stock_sentences_that_the_owner_read_are_gone_where_a_measurement_exists(self):
         for precondition in ("switch-off", ""):

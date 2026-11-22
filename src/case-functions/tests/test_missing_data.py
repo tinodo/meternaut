@@ -24,7 +24,7 @@ from cases.memory_store import stamp
 ABSENT = {"metrics": {"MetricA": {"total": None, "days": 30, "days_with_data": 0, "totals": [None]}}}  # what the real toolbox records for a measurement that has no data
 ENDPOINTS = "microsoft.network/privateendpoints"
 NO_PLACE_ONE = "The places for requests are full, or nobody is named as an approver. The AI looks at it again at its next search."  # why nobody is asked about a priced, measured finding that no rule holds back
-NOTHING_MEASURED = 'Other resources can depend on a private endpoint. Nothing was measured of its use, and a read of Azure cannot see what depends on it. The second AI says: "Disconnected shows how it is now, not for how long."'  # what could go wrong for the endpoint of the owner's question: why the risk is high (the kind is one that others share), no measurement, and the doubt of the second AI
+NOTHING_MEASURED = 'Nothing was measured of its use, and a read of Azure cannot see what depends on it. The second AI says: "Disconnected shows how it is now, not for how long."'  # what could go wrong for the endpoint of the owner's question: that no measurement exists and the doubt of the second AI, and no sentence made from the kind of resource alone ("Other resources can depend on a private endpoint." fitted every private endpoint)
 
 
 def watch(raw, resources, evidence, **options) -> Harness:
@@ -174,7 +174,7 @@ class AdviceSaysNoMoreThanItKnows(unittest.TestCase):
         self.assertEqual(texts["headline"], "Check whether the private endpoint pe-apim-demo is still used")
         self.assertEqual(texts["chips"], "High risk if you act, Low confidence, Answering changes nothing in Azure")
         self.assertEqual(texts["check-first"], CHECK_FIRST_SHORT)
-        self.assertTrue(texts["risk"].startswith("**What could go wrong:** Other resources can depend on a private endpoint. Nothing was measured of its use"), texts["risk"])
+        self.assertTrue(texts["risk"].startswith("**What could go wrong:** Nothing was measured of its use"), texts["risk"])
         letter = letters.approval_letter(plan, case, PERSON, BASE, WEB_NOW, CONTACTS)
         for words in ("Check whether the private endpoint pe-apim-demo is still used", "High risk if you act, Low confidence, Answering changes nothing in Azure", CHECK_FIRST_SHORT,
                       "What could go wrong: " + NOTHING_MEASURED):
@@ -189,13 +189,13 @@ class AdviceSaysNoMoreThanItKnows(unittest.TestCase):
         self.assertEqual(b.headline, "Consider deleting the disk disk-demo in group rg-platform")
         self.assertEqual((b.risk.level, b.risk.text), ("medium", 'The MetricA metric was 0 in 30 days, 27 of them with a value, which does not show what depends on it. The second AI says: "A monthly job may need the headroom."'))
         self.assertEqual((b.check_first, stake.chips_of(b)[0]), ((), "Medium risk if you act"))
-        self.assertIn("with a value on 27 of those days", next(f.value for f in b.facts if f.label == "MetricA"))
+        self.assertEqual(next(f.value for f in b.facts if f.label == "MetricA"), "0 in 30 days, 27 of them with a value", "the row says it as the sentence of the risk does: one fact, one reading")
 
     def test_a_finding_about_a_kind_that_others_share_says_so_whatever_it_asks(self):
         asks_to_change = endpoint_case(recommendation="change", facts={"basis": "oversized", "proposal": "change", "metrics": {"MetricA": 4}})
         b = brief.build_brief(asks_to_change, endpoint_plan(asks_to_change, title="Look at the private endpoint pe-apim-demo"), now=WEB_NOW, may_answer=True)
         self.assertEqual((b.headline.startswith("Look at"), b.risk.level, b.risk.text),
-                         (True, "high", 'Other resources can depend on a private endpoint. The MetricA metric was 4 in the period measured, which does not show what depends on it. The second AI says: "Disconnected shows how it is now, not for how long."'))
+                         (True, "high", 'The MetricA metric was 4 in the period measured, which does not show what depends on it. The second AI says: "Disconnected shows how it is now, not for how long."'))
         self.assertEqual(b.check_first, (), "it is not the question whether the resource is still used")
 
     def test_a_request_with_no_plan_and_a_case_of_the_older_detectors_keep_their_words(self):
