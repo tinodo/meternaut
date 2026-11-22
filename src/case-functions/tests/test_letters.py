@@ -36,8 +36,9 @@ LINK_PATHS = re.compile(r"^https://meternaut\.example/(ok/[A-Za-z0-9_-]{1,64})?$
 # with your name. If you act, you do it yourself in Azure with your own rights."), and the longest one, that of a group that code priced and that the limit of a run cut, is 186 words.
 # On 20 November the approval letter of advice from the investigation said what an answer does for its kind of request (that Meternaut cannot make the change, and why, or that the AI named no setting) and
 # what could go wrong from the facts (what was measured of the use, and what the second AI doubts) where it had said stock sentences: the group letter went from 170 to 186 words, and then to 193 with the
-# reason for a high risk and the rate under the figure. It was made shorter, not the limit longer: a letter leaves out "There is no history of cases like this yet." (the page and the card say it), and
-# who acts says "If you act" where it said "If you decide to act". The group letter is 182 words, and the limit is that measure.
+# reason for a high risk and the rate under the figure. It was made shorter, not the limit longer: a letter left out "There is no history of cases like this yet." (the page and the card said it; since
+# 22 November no page, card or letter says it, because with no history there is nothing to say), and who acts says "If you act" where it said "If you decide to act". The group letter is 182 words,
+# and the limit is that measure.
 MOST_WORDS = {"first contact": 110, "approval": 182, "digest": 150, "done": 105}  # the approval letter of advice says in three sentences what an answer does and who acts, in one what a person is asked (brief.ASKED) and in one what could go wrong, in words that a person reads once
 
 
@@ -339,7 +340,8 @@ class FirstContact(unittest.TestCase):
     def test_it_says_who_writes_what_for_what_it_does_not_do_and_where_to_pause_or_stop_the_letters(self):
         text = self.letter.text
         self.assertIn("I am Meternaut, an AI that looks for Azure resources that cost money and are not used.", text)
-        self.assertIn("I change nothing myself. You decide on a web page, and a change runs with your own Azure rights.", text)
+        self.assertIn("I never change anything on my own. You decide on a web page, and a change runs with your own Azure rights.", text, "said once, at the first request, which may be advice or a change that Meternaut makes after the approval: true of both")
+        self.assertNotIn("I change nothing myself", text)
         self.assertIn("You can pause or stop my letters under Settings on that page.", text)
         self.assertIn("You are on my list of people, as approver and owner.", text)
 

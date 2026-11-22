@@ -65,7 +65,8 @@ class ThePage(unittest.TestCase):
         found = self.reply.facts()
         self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "What could go wrong", "Undo"])
         self.assertEqual(found["What changes"], "Azure deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
-        self.assertTrue(found["Who does it"].startswith("You do it, with your own permissions."), found["Who does it"])
+        self.assertTrue(found["Who does it"].startswith("Meternaut makes the change, with your own permissions."), found["Who does it"])
+        self.assertNotIn("You do it", found["Who does it"], "one story: Meternaut makes the change with the approver's permissions, and the page does not also say that the approver does it")
         self.assertIn("Azure checks your rights, starts the change right then and may need a few minutes to finish it.", found["Who does it"])
         self.assertIn("Meternaut holds no right of its own to change anything.", found["Who does it"])
         self.assertNotIn("sign in", found["Who does it"].lower())
@@ -885,6 +886,10 @@ class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
         main = console.submit(form, APPROVE, confirm=False, note="Go on").main
         self.assertIn("This is the disk planted-disk-1 in resource group meternaut-test-rg, subscription contoso-dev.", main.text())
         self.assertNotIn("bbbbbbbb", main.text())
+
+    def test_the_line_of_the_footer_says_why_a_person_sees_the_page_and_for_a_delete_it_is_that_it_cannot_be_undone(self):
+        self.assertIn("You see this because you asked to approve a change that cannot be undone.", self.reply.content)
+        self.assertNotIn("real resource", self.reply.content, "the line for a change to a real resource is not the line of a delete")
 
     def test_the_safe_button_is_the_main_one_and_it_is_a_plain_link_back_to_the_request(self):
         (back,) = [a for a in self.reply.main.find_all("a") if a.text() == "No, go back"]

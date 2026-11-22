@@ -176,10 +176,16 @@ def _traffic(reader: Reader, failed: dict[str, str], endpoint: str) -> tuple[str
         days.append(sum(1 for point in points if point.total is not None or point.maximum is not None or point.average is not None))
     said = f"{quantity(totals[0] or 0, 'Bytes')} in and {quantity(totals[1] or 0, 'Bytes')} out"
     if any(totals):
-        return "some", f"{said}, on {max(days)} of {WINDOW} days"
+        return "some", f"{said}{_days_said(max(days), 'on')}"
     if all(total == 0 for total in totals) and min(days) >= MEASURED_DAYS:
-        return "zero", f"{said}, with a value on {min(days)} of {WINDOW} days"
+        return "zero", f"{said}{_days_said(min(days), 'with a value on')}"
     return "unmeasured", "Not measured, because the read failed" if "traffic" in failed else f"Not measured, because Azure Monitor gave a value on {max(days)} of {WINDOW} days and {MEASURED_DAYS} are needed"
+
+
+def _days_said(days: int, lead: str) -> str:
+    """On how many of the WINDOW days a reading had a value, said only when that is not every day of the window, as the facts of the page say it (a zero over 30 days may be a zero of 20): ", with a value on 27
+    of 30 days", and nothing for 30 of 30."""
+    return "" if days >= WINDOW else f", {lead} {days} of {WINDOW} days"
 
 
 def _day(value: dt.datetime | str) -> str:

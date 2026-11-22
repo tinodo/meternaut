@@ -352,6 +352,16 @@ class TheCheckOfAPrivateEndpoint(unittest.TestCase):
         self.assertEqual(found["facts"]["traffic"], "unmeasured", "one metric without data is not a zero of the endpoint")
         self.assertTrue({row[0]: row[1] for row in found["rows"]}["Traffic in the 30 days before it was read"].startswith("Not measured"))
 
+    def test_the_row_of_the_traffic_says_on_how_many_days_it_had_a_value_only_when_that_is_not_every_day_of_the_window(self):
+        # It said "0 bytes in and 0 bytes out, with a value on 30 of 30 days" next to a fact of the page that says "0 bytes in 30 days": the same rule as the facts of the page now.
+        for label, points, expected in (("every day, nil", days(0, 30), "0 bytes in and 0 bytes out"), ("27 days, nil", days(0, 27), "0 bytes in and 0 bytes out, with a value on 27 of 30 days"),
+                                        ("every day, some", days(1024, 30), "30 KB in and 30 KB out"), ("3 days, some", days(1024, 3), "3 KB in and 3 KB out, on 3 of 30 days")):
+            with self.subTest(case=label):
+                azure = Azure()
+                azure.points = {"PEBytesIn": points, "PEBytesOut": points}
+                found, _ = check(azure)
+                self.assertEqual({row[0]: row[1] for row in found["rows"]}["Traffic in the 30 days before it was read"], expected)
+
     def test_the_best_connection_counts_and_a_connection_that_names_no_service_that_can_be_read_is_not_checked(self):
         azure = Azure()
         azure.rows[PE]["properties"]["privateLinkServiceConnections"] = [connection("Approved")]
@@ -435,7 +445,7 @@ class AFigureFromTheBillNeverSwitchesOffTheCheckOfWhatDependsOnAResource(unittes
     def test_what_could_go_wrong_stays_and_the_figure_is_shown_beside_it(self):
         plain, priced = self.pair("check")
         self.assertNotIn(brief.NOT_MEASURED_USE, brief.acting_risk(priced).text, "an impact check looked (traffic, Resource Graph): its block says what, and 'nothing was measured' would be false")
-        self.assertTrue(brief.acting_risk(priced).text.startswith("Other resources can depend on a private endpoint."), "what could go wrong stays")
+        self.assertEqual(brief.acting_risk(priced).text, 'The second AI says: "Disconnected shows how it is now, not for how long."', "what could go wrong stays: what the second AI doubts, and no sentence that the kind of resource alone would make")
         b = brief.build_brief(priced, endpoint_plan(priced, saving_usd_month=None), now=WEB_NOW, may_answer=True)
         self.assertEqual((b.saving.monthly, b.saving.level), (80.0, "Expected"))
         self.assertEqual(b.check_first, brief.build_brief(plain, endpoint_plan(plain, saving_usd_month=None), now=WEB_NOW, may_answer=True).check_first)
@@ -473,7 +483,21 @@ class WhatAPersonReads(unittest.TestCase):
                 self.assertEqual((b.check_first, b.change), ((), brief.ADVICE_CHANGE))
         case = case_with(digest_of("check"))
         b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
-        self.assertEqual((b.impact.verdict, b.risk.level, b.risk.text), ("check", "high", 'Other resources can depend on a private endpoint. The second AI says: "Disconnected shows how it is now, not for how long."'))
+        self.assertEqual((b.impact.verdict, b.risk.level, b.risk.text), ("check", "high", 'The second AI says: "Disconnected shows how it is now, not for how long."'))
+
+    def test_a_request_with_nothing_to_say_about_what_could_go_wrong_says_nothing_and_shows_no_label_over_an_empty_line(self):
+        # The check of what depends on it ran, so "nothing was measured" would be false, and the second AI raised no objection: the sentence that the kind of resource alone made ("Other resources can
+        # depend on a private endpoint.") was all that stood under the label, and with it gone the label stood over nothing.
+        case = dataclasses.replace(case_with(digest_of("check")), objections=())
+        plan = endpoint_plan(case, saving_usd_month=None)
+        b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
+        self.assertEqual((b.risk.level, b.risk.text, b.doubt), ("high", "", ""))
+        self.assertEqual(stake.chips_of(b)[0], f"High risk{brief.IF_ACTED}", "the chip still says the level, and the block Impact says what to check")
+        reply, _ = page_of(case, plan)
+        self.assertNotIn("What could go wrong", reply.main.text())
+        card = {block["id"]: block["text"] for block in walk_blocks(cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}")))}
+        self.assertNotIn("risk", card)
+        self.assertNotIn("What could go wrong", letters.approval_letter(plan, case, PERSON, BASE, WEB_NOW, CONTACTS).text)
 
     def test_the_card_and_the_letter_carry_the_verdict_and_its_first_reason_in_one_line(self):
         for verdict, says in (("safe", "It looks safe to remove."), ("keep", "Do not remove it."), ("check", "Check what depends on it before you remove it.")):

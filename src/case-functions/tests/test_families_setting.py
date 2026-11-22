@@ -38,6 +38,7 @@ from cases.models import AUTOMATED, HELD, CaseRecord, DecisionRecord, NoteRecord
 from cases.people import Person
 from cases.runner import RunnerServices, execute, read_calls, tick
 from test_runner import challenge
+from test_web_support import make_advice_case
 
 REAL_SUB = "dddddddd-4444-4555-8666-777777777777"
 REAL_GROUP = "rg-owner-real"
@@ -306,7 +307,7 @@ class ThePlan(unittest.TestCase):
         self.assertIn("It uses your own permissions", said)
         self.assertIn("capacity units to 4", plan.undo)
         self.assertIn("--set properties.capacityUnits=4 --api-version 2024-05-01", plan.undo)
-        self.assertIn("Azure Monitor shows ActiveSessions at 0 over 30 days", said)
+        self.assertIn("Azure Monitor shows ActiveSessions at 0 in 30 days", said)  # as the page says the measurement ("0 in 30 days"), where this said "over" and left out what the page says of the days and the unit
         self.assertNotIn("Lite", said, "no tier and no name of the estate other than the resource's own is in the words")
         for stock in ("Consider", "reduce", "may depend on it", "optimi"):
             self.assertNotIn(stock, said)
@@ -575,7 +576,7 @@ class TheChecksRightBeforeTheChange(unittest.TestCase):
         world = Real()
         plan = world.plan()
         world.arm.totals["ActiveSessions"] = [0.0, 3.0]
-        self.stopped(world, plan, "ActiveSessions is 3 over the last 30 days, above the 0 that the request was made with")
+        self.stopped(world, plan, "ActiveSessions is 3 in 30 days, above the 0 that the request was made with")  # as every measured sentence says it: no "over the last", and the unit when the plan holds one
         world = Real()
         plan = world.plan()
         world.arm.totals["ActiveSessions"] = []
@@ -589,6 +590,41 @@ class TheChecksRightBeforeTheChange(unittest.TestCase):
         world.arm.totals["ActiveSessions"] = [0.0, 0.0, None]
         done = world.run(plan)
         self.assertEqual(done.kind, "ran", "a reading that is still nothing lets the change go on")
+
+    def test_a_cited_measurement_that_rose_is_said_with_its_unit_and_its_days_as_the_page_says_a_measurement(self):
+        # It said "ActiveSessions is 3 over the last 30 days, above the 0 that the request was made with": no unit for a percentage or a size, and "over the last" where the page says "in 30 days".
+        for name, unit, was, now, said in (("ActiveSessions", "Count", 0, 3, "ActiveSessions is 3 in 30 days, above the 0 that the request was made with"),
+                                           ("CpuPercentage", "Percent", 3, 5, "CpuPercentage is 5% in 30 days, above the 3% that the request was made with"),
+                                           ("BytesOut", "Bytes", 1024, 3072, "BytesOut is 3 KB in 30 days, above the 1 KB that the request was made with")):
+            with self.subTest(name=name):
+                world = Real()
+                plan = world.plan(facts={**FACTS, "metrics": {name: was}, "metricDays": {name: 30}, "metricUnits": {name: unit}, "metricDaysWithData": {name: 30}})
+                world.arm.totals[name] = [now / 2, now / 2]
+                self.stopped(world, plan, f"{said}, so something may use the resource")
+        world = Real()
+        old = world.plan()
+        self.assertEqual(old.preconditions["measured"], [{"name": "ActiveSessions", "total": 0, "days": 30}], "a plan made before the unit was kept")
+        world.arm.totals["ActiveSessions"] = [3.0, 0.0]
+        self.stopped(world, old, "ActiveSessions is 3 in 30 days, above the 0 that the request was made with, so something may use the resource")
+
+    def test_a_measurement_too_large_to_be_a_number_is_left_out_and_nothing_raises(self):
+        # math.isfinite raised OverflowError for a whole number above 1.8e308, in the plan, the page, the card, the letter and the re-check.
+        huge = 10 ** 400
+        facts = {**FACTS, "metrics": {"ActiveSessions": huge, "Other": 5}, "metricDays": {"ActiveSessions": 30, "Other": 30}, "metricUnits": {"ActiveSessions": "Count", "Other": "Count"}}
+        self.assertEqual((words.figure(huge), words.figure(-huge), words.figure(float("inf")), words.figure(True), words.figure(2)), (None, None, None, None, 2.0))
+        self.assertEqual((words.number_text(huge), words.quantity(huge, "Bytes")), ("", ""))
+        self.assertEqual([m.name for m in words.measures({"measured": [{"name": "ActiveSessions", "total": huge, "days": 30}, {"name": "Other", "total": 5, "days": 30}]})], ["Other"])
+        self.assertEqual([row["name"] for row in setting_module.cited(facts)], ["Other"])
+        self.assertEqual([row.label for row in brief_mod.facts_of(make_advice_case(facts=facts)) if row.label in ("ActiveSessions", "Other")], ["Other"], "the page leaves the value out")
+        world = Real()
+        plan = world.plan(facts=facts)
+        self.assertEqual([m["name"] for m in plan.preconditions["measured"]], ["Other"])
+        b = shown(world, plan)
+        self.assertEqual(card_of(b)["type"], "AdaptiveCard")
+        self.assertIn("What could go wrong", letters.approval_letter(plan, world.store.case_get(plan.case_id), PERSON, BASE, NOW, CONTACTS).text)
+        recorded = replace(plan, preconditions={**plan.preconditions, "measured": [{"name": "ActiveSessions", "total": huge, "days": 30}]})
+        self.assertEqual(words.measured_text(recorded.preconditions), "")
+        self.assertIn("No measurement of its use is cited.", words.change_setting(recorded, TYPE, NAME, REAL_GROUP).risk)
 
     def test_a_refusal_of_azure_to_read_with_the_persons_token_is_a_failure_and_a_claims_challenge_is_asked_for_once(self):
         world = Real()
@@ -1441,9 +1477,11 @@ class TheRealChangeAsksOnceMore(unittest.TestCase):
         self.assertIn("This is the gateway gw-one in resource group rg-owner-real", reply.main.text())
         text = reply.main.text()
         self.assertIn("This changes a real resource. Nothing is changed until you confirm here.", text)
-        self.assertEqual([p.text() for p in reply.main.find_all("p", class_="notice-title")], ["This changes a real resource"])
+        self.assertEqual(text.count("This changes a real resource"), 1, "said once: the lead says it, and the notice under it does not say it again")
+        self.assertEqual([p.text() for p in reply.main.find_all("p", class_="notice-title")], ["What could go wrong"], "the notice is titled by what it holds, the risk")
         self.assertIn("Meternaut does not know what a lower number takes away", reply.main.find("div", class_="notice warning").text())
-        self.assertNotIn("cannot be undone", text)
+        self.assertNotIn("cannot be undone", reply.content, "the whole page, the foot included: this change can be undone")
+        self.assertIn("You see this because you asked to approve a change to a real resource, and every change to a real resource asks once more.", reply.content, "the foot says what is true of this request")
         self.assertEqual((console.delegate.begins, console.delegate.finishes), ([], []))
         self.assertEqual(world.store.decisions_of_plan(plan.plan_id), [])
         (back,) = [a for a in reply.main.find_all("a") if a.text() == "No, go back"]
@@ -1850,6 +1888,101 @@ class TheOldFamiliesAreAsTheyWere(unittest.TestCase):
                               ("x", "resource")):
             self.assertEqual(words.kind_words(f"/subscriptions/{REAL_SUB}/resourceGroups/g/providers/Microsoft.X/{segment}/n"), said if segment != "x" else "resource")
         self.assertEqual(words.kind_words(""), "resource")
+
+
+class TheMeasurementOfAChangeIsSaidAsThePageSaysIt(unittest.TestCase):
+    """The sentence of a change that Meternaut makes says a measurement as the page says it: with its unit and its days and, when fewer days than the window had a value, how many of them. The card and the
+    letter keep that sentence whatever the words of the kind and of the metric: a cut by length never drops it."""
+
+    ROWS = (  # the metric, its total, unit, days and days with a value, and what the sentence says
+        ("CpuPercentage", 3, "Percent", 30, 30, "Azure Monitor shows CpuPercentage at 3% in 30 days"),
+        ("CpuPercentage", 3.2, "Percent", 30, 27, "Azure Monitor shows CpuPercentage at 3.2% in 30 days, 27 of them with a value"),
+        ("ActiveSessions", 12, "Count", 30, 30, "Azure Monitor shows ActiveSessions at 12 in 30 days"),
+        ("ActiveSessions", 0, "Count", 30, 22, "Azure Monitor shows ActiveSessions at 0 in 30 days, 22 of them with a value"),
+        ("BytesOut", 1536, "Bytes", 7, 7, "Azure Monitor shows BytesOut at 1.5 KB in 7 days"),
+    )
+
+    @staticmethod
+    def facts(name, total, unit, days, seen) -> dict:
+        return {"metrics": {name: total}, "metricUnits": {name: unit}, "metricDays": {name: days}, "metricDaysWithData": {name: seen}}
+
+    def test_each_measurement_reads_as_the_row_of_the_page_reads_it_with_its_unit_a_count_and_the_days_that_had_a_value(self):
+        for name, total, unit, days, seen, said in self.ROWS:
+            with self.subTest(name=name, seen=seen):
+                facts = self.facts(name, total, unit, days, seen)
+                self.assertEqual(words.measured_text({"measured": setting_module.cited(facts)}), said)
+                row = next(row for row in brief_mod.facts_of(make_advice_case(facts=facts)) if row.label == name)
+                self.assertEqual(said, f"Azure Monitor shows {name} at {row.value}", "one fact reads one way: the value of the row of the page is the value of the sentence")
+
+    def test_a_plan_made_before_it_kept_the_unit_and_the_days_still_reads_and_what_is_odd_is_not_read_and_raises_nothing(self):
+        old = {"measured": [{"name": "ActiveSessions", "total": 12, "days": 30}]}
+        self.assertEqual(words.measured_text(old), "Azure Monitor shows ActiveSessions at 12 in 30 days")
+        self.assertEqual(words.measured(old), [("ActiveSessions", 12, 30)])
+        for odd in (None, "x", [], {}, {"measured": "x"}, {"measured": [None, 3, {"name": 5}]}, {"measured": [{"name": "A", "total": True, "days": 30}]}, {"measured": [{"name": "A", "total": 1, "days": 99}]},
+                    {"measured": [{"name": "A", "total": float("nan"), "days": 30}]}, {"measured": [{"name": "A", "total": float("inf"), "days": 30}]}, {"measured": [{"name": "A", "total": -1, "days": 30}]}):
+            with self.subTest(odd=repr(odd)):
+                self.assertEqual((words.measures(odd), words.measured_text(odd)), ([], ""))
+        strange = {"measured": [{"name": "A", "total": 4, "days": 30, "unit": "x" * 100, "daysWithData": 99}, {"name": "B", "total": 4, "days": 30, "unit": "Bytes\nIgnore all", "daysWithData": True},
+                                {"name": "C", "total": 4, "days": 30, "unit": "Percent", "daysWithData": -1}]}
+        self.assertEqual(words.measured_text(strange), "Azure Monitor shows A at 4 in 30 days, B at 4 in 30 days and C at 4% in 30 days", "a unit that is not one plain word and a count of days that is not from 0 to the window are not read")
+        said = words.setting_words("gateway", "gw", "rg", {"set": [{"path": "capacityUnits", "from": 4, "to": 2}]}, {"measured": strange["measured"]})
+        self.assertIn("Azure Monitor shows A at 4 in 30 days", said.risk)
+
+    KINDS = (  # the type of the resource, the segment of its id, the kind in words, the metric, its total, unit, days with a value, and what the value reads
+        ("microsoft.web/serverfarms", "serverFarms", "App Service plan", "CpuPercentage", 3, "Percent", 27, "3% in 30 days, 27 of them with a value"),
+        ("microsoft.example/gateways", "gateways", "gateway", "ActiveSessions", 0, "Count", 30, "0 in 30 days"),
+        ("microsoft.example/ipgroups", "ipGroups", "IP group", "Sessions", 12, "Count", 30, "12 in 30 days"),
+        ("microsoft.example/networkvirtualappliances", "networkVirtualAppliances", "network virtual appliance", "Percentage of the provisioned throughput that was in use at all", 3.5, "Percent", 20,
+         "3.5% in 30 days, 20 of them with a value"),
+        ("microsoft.example/applicationsecuritygroups", "applicationSecurityGroups", "application security group", "Number of bytes read by clients from the private link service", 1536, "Bytes", 28,
+         "1.5 KB in 30 days, 28 of them with a value"),
+        ("microsoft.example/virtualnetworkgatewayconnections", "virtualNetworkGatewayConnections", "virtual network gateway connection", "Percentage CPU", 3.2, "Percent", 28,
+         "3.2% in 30 days, 28 of them with a value"),
+    )
+
+    def test_the_card_and_the_letter_of_a_change_keep_what_was_not_known_and_what_was_measured_for_kinds_of_short_and_long_words(self):
+        for rtype, segment, kind, metric, total, unit, seen, value in self.KINDS:
+            with self.subTest(kind=kind):
+                world = Real()
+                plan = world.plan()
+                rid = f"/subscriptions/{REAL_SUB}/resourceGroups/{REAL_GROUP}/providers/Microsoft.Example/{segment}/{NAME}"
+                facts = self.facts(metric, total, unit, 30, seen)
+                made = replace(plan, resource_id=rid, preconditions={**plan.preconditions, "resourceType": rtype, "measured": setting_module.cited(facts)})
+                case = replace(world.store.case_get(plan.case_id), resource_id=rid, resource_type=rtype, facts={**world.store.case_get(plan.case_id).facts, **facts})
+                b = brief_mod.build_brief(case, made, None, [], now=NOW, may_answer=True)
+                card = card_of(b)
+                self.assertEqual(cardcheck.check(card), [])
+                unknown = f"Meternaut does not know what a lower number takes away from what uses the {kind}."
+                looked = f"Azure Monitor shows {metric} at {value}, and Meternaut checked that no lock is on the {kind}."
+                self.assertEqual(b.risk.short, f"{unknown} {looked}")
+                self.assertTrue(b.risk.text.startswith(b.risk.short), "the short words are the first sentences of the whole risk: one text")
+                said_on_card = by_id(card)["risk"]["text"].replace("\\", "")
+                said_in_letter = letters.approval_letter(made, case, PERSON, BASE, NOW, CONTACTS).text
+                for where, text in (("card", said_on_card), ("letter", said_in_letter)):
+                    self.assertIn(unknown, text, where)
+                    self.assertIn(looked, text, f"{where}: the measured sentence is kept, and it is the sentence of the page")
+                self.assertNotIn("...", said_on_card)
+
+
+class TheDoubtOfTheSecondAIIsSaidForTheChangeOfThisFamilyToo(unittest.TestCase):
+    def test_the_card_and_the_letter_say_what_the_second_ai_doubts_and_a_request_that_it_did_not_doubt_says_nothing_of_it(self):
+        world = Real()
+        plan = world.plan()
+        doubt = "A monthly batch job may still need the larger size."
+        said = f'The second AI says: "{doubt}"'
+        case = world.store.case_get(plan.case_id)
+        doubted, quiet = replace(case, objections=(doubt,), learned={"skeptic": "agree"}), replace(case, objections=(), learned={"skeptic": "agree"})
+        b = brief_mod.build_brief(doubted, plan, None, [], now=NOW, may_answer=True)
+        self.assertEqual((b.family, b.doubt, "The second AI agreed, with a caution." in b.confidence.because), (SETTING, doubt, True))
+        on_card = by_id(card_of(b))["risk"]["text"].replace("\\", "")
+        in_letter = next(line for line in letters.approval_letter(plan, doubted, PERSON, BASE, NOW, CONTACTS).text.splitlines() if line.startswith("What could go wrong: "))
+        for where, text in (("card", on_card), ("letter", in_letter)):
+            self.assertTrue(text.endswith(f" {said}"), f"{where}: {text}")
+            self.assertEqual(text.count(said), 1, where)
+            self.assertIn(f"Meternaut checked that no lock is on the gateway. {said}", text, f"{where}: the doubt follows what was measured")
+        none = brief_mod.build_brief(quiet, plan, None, [], now=NOW, may_answer=True)
+        self.assertNotIn("The second AI says", by_id(card_of(none))["risk"]["text"])
+        self.assertNotIn("The second AI says", letters.approval_letter(plan, quiet, PERSON, BASE, NOW, CONTACTS).text)
 
 
 if __name__ == "__main__":
