@@ -844,6 +844,40 @@ class TheRecordOfTheCandidates(unittest.TestCase):
         self.assertIn("**Nothing is promoted by the replay tool.** No replay tool writes the production agent, the lock or the instructions, or decides a release", self.SECTION)
         self.assertNotIn("A tool may suggest", self.SECTION, "agents-lock writes the lock and the instructions, and agents-ready makes versions: it is the replay tool that promotes nothing")
 
+    def test_a_row_has_a_verdict_only_when_the_replay_printed_its_own_line_and_the_numbers_of_the_promotion_test_are_those_of_the_file_and_the_hub_logs(self):
+        item = self.SECTION[self.SECTION.index("**The held-out rows.**"):]
+        evals, rows = aisec.evals, aisec.helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40)
+        row = next(r for r in rows if r["id"] == "heldout-firewall")
+        first = evals.answer_lines(row, "no json", [{"name": "describe", "arguments": {}, "result": "{}"}] * 3)[0]
+        self.assertEqual(first, "heldout-firewall: calls: 3 tool calls: describe, describe, describe", "the first line of the block of a row that was replayed: the proposal says that a row without it was not")
+        for words in ("**A row has a verdict only when the replay printed its own line** `<id>: calls: N tool calls`", "A run that a spend cap stopped (a `STOPPED` line says so) prints no line and no `miss:` line for the rows that it did not reach",
+                      "a run that failed ends before any `miss:` line", "it counts for neither side, and it is replayed again", "a run that did not print its closing line `run: N of 38 fixtures replayed (only: …)` counts for none of its rows"):
+            self.assertIn(words, item)
+        tool = (ROOT / "tools" / "foundry-evals.py").read_text(encoding="utf-8")
+        self.assertIn('f"run: {len(graded)} of {len(everything)} fixtures replayed{only} against {versus}; judge {judge}"', tool, "the closing line that the proposal names")
+        self.assertIn('helpers.say(f"STOPPED {stopped}")', tool)
+        host, held = [r["id"] for r in rows if "bastion" in r["id"]], [r["id"] for r in rows if r["id"].startswith("heldout-")]
+        self.assertEqual(len(host), 6, "the host has six rows, and the proposal names every one of them")
+        for name in host:
+            self.assertIn(f"`{name}`", item)
+        pairs = [("idle-bastion-with-four-units", "busy-bastion-with-four-units"), ("lightly-used-bastion-with-four-units", "lightly-used-bastion-without-limits"), ("bastion-four-units-full-story", "bastion-four-units-floor-in-docs")]
+        self.assertEqual(sorted(name for pair in pairs for name in pair), sorted(host))
+        self.assertEqual([len(",".join(pair)) for pair in pairs], [57, 72, 62], "two ids of the older rows in a start of the Hub action: 57, 72 and 62 of the 80 characters")
+        self.assertEqual(sum(sorted(len(name) for name in host)[:3]) + 2, 87, "no three ids of the older rows fit in the 80 characters of one start")
+        self.assertEqual(len(",".join(held)), 73)
+        self.assertGreater((sum(map(len, host + held)) + len(host + held)) / 81, 3, "ten ids need four starts at least: three of the older rows and one of the held-out rows")
+        for words in ("three starts of the Hub action, two ids each (57, 62 and 72 of the 80 characters that the input takes)", "the 80 characters of the input take in four starts of the Hub action, three of two older ids each and one of the four held-out ids",
+                      "are 22 runs of a row, so a full test is about 10 US dollars, in seven starts of the Hub action (four of the held-out ids and three of the older ones)", "the six older rows once",
+                      "73,342 tokens a row, 80,536 and 92,538", "about 1.8 million for 38"):
+            self.assertIn(words, self.SECTION)
+        self.assertEqual((4 * 4 + len(host), round((4 * 4 + len(host)) * 0.45), 4 + len(pairs)), (22, 10, 7), "four rows twice with the candidate and twice with production, six older rows once: runs, US dollars, starts")
+        cap = json.loads((ROOT / "evaluation" / "limits.json").read_text(encoding="utf-8"))["maxTokens"]
+        low, high = 983_350 + 10 * 73_342, 983_350 + 10 * 92_538
+        self.assertTrue(cap < low and abs(1_800_000 - (low + high) // 2) < 100_000, "the first replay of 28 rows and the ten newer rows at 73,342 to 92,538 tokens: about 1.8 million, over the cap")
+        self.assertEqual(len(rows) - 28, 10, "the ten newer rows are the six of the host and the four held-out rows")
+        for stale in ("about 60,000", "60,000 tokens", "five older rows", "21 runs"):
+            self.assertNotIn(stale, self.PROPOSAL, "a number that the Hub logs of runs 44895789838, 44933709780 and 44954682299 showed to be wrong, or that counted five older rows")
+
     def test_the_size_of_the_first_candidate_that_the_proposal_gives_is_the_size_of_the_file(self):
         text = (FOLDER / f"{FIRST}.txt").read_text(encoding="utf-8")
         self.assertIn(f"the first candidate is {len(text):,} characters", self.SECTION)

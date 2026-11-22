@@ -20,7 +20,7 @@ run     Replays the Investigator on the invented fixtures of evaluation/cases.js
         --judge connection  also the quality evaluators, with the judge model reached through the AI Gateway connection of the lock (`<connection>/<alias>`): no direct deployment is a judge.
         --judge auto        connection first, and none when the service refuses the evaluators that need a judge.
         --only ID[,ID...]   replays only the fixtures that it names (ids of evaluation/cases.jsonl, separated by commas or by spaces) and judges the thresholds over those rows alone: a threshold
-                            that none of them asks for is printed UNKNOWN. An id that is no row, or that starts with a hyphen, is refused before any call is made. About 60,000 tokens a fixture. It also
+                            that none of them asks for is printed UNKNOWN. An id that is no row, or that starts with a hyphen, is refused before any call is made. 35,000 tokens for an older fixture and 73,000 to 93,000 for one with a bill and a list. It also
                             prints, for each fixture, what the Investigator answered as the grader read it: the tools that it called and each finding with the verdict of the app's rules (docs/proposals/11).
         --candidate NAME    replays against a candidate of the instructions and never against the production agent: a temporary agent `meternaut-candidate-...` in the project, with the production definition and the
                             instructions of evaluation/candidates/NAME.txt (plain UTF-8 text of 1 to 20,000 characters, not the production text), graded and capped as the production agent is. It is deleted when the
