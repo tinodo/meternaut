@@ -288,6 +288,15 @@ class TheOperatorIsFoundAndTheToolsAreStartedInIt(unittest.TestCase):
                 args = self.started(EVALS, EVALS_COMMAND=command, EVALS_ONLY="whatever it is; it is ignored")
                 self.assertTrue(all("--only" not in a and "whatever" not in a for a in args))
 
+    def test_the_four_held_out_rows_can_be_named_in_one_run_of_the_hub_and_reach_the_tool_as_words_of_its_arguments(self):
+        rows = [json.loads(line) for line in (ROOT / "evaluation" / "cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+        held = [row["id"] for row in rows if row["id"].startswith("heldout-")]
+        joined = ",".join(held)
+        self.assertEqual(len(held), 4)
+        self.assertLessEqual(len(joined), 80, "the input evals_only takes 80 characters at most: four long ids would be refused before anything is started")
+        text = next(a for a in self.started(EVALS, EVALS_COMMAND="run", EVALS_JUDGE="none", EVALS_ONLY=joined) if a.startswith("TOOL_ARGS="))
+        self.assertTrue(text.endswith(" --only " + " ".join(held)), text)
+
     def test_no_value_of_evals_only_can_set_another_option_of_the_tool_through_the_words_that_it_becomes(self):
         for sneaky in ("idle-disk-1,--judge,connection", "--judge,connection", "idle-disk-1,--lock,x", "idle-disk-1,--wait-seconds,1", "idle-disk-1,--summary,x"):
             with self.subTest(sneaky=sneaky):

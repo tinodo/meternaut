@@ -840,7 +840,8 @@ class TheLimits(Base):
             for path in {path for held in (spec.get("limits") or {}).values() for path in held}:
                 self.assertEqual(len({json.dumps(held[path], sort_keys=True) for held in (spec.get("limits") or {}).values() if path in held}), 1, "a page is the page of a type: one range for a name")
         self.assertEqual(ROWS["lightly-used-bastion-with-four-units"]["limits"], {"r1": {"scaleUnits": {"lowest": 2, "highest": 50}}}, "what the reference page of the type says of its property")
-        self.assertEqual([r["id"] for r in ROWS.values() if r.get("limits")], ["lightly-used-bastion-with-four-units", "bastion-four-units-full-story"])
+        self.assertEqual([r["id"] for r in ROWS.values() if r.get("limits")], ["lightly-used-bastion-with-four-units", "bastion-four-units-full-story", "heldout-appgw-mincap"],
+                         "the rows that give a range: the two of the host (its one property, as the page gives it) and the held-out gateway (the minimum and the maximum capacity of its autoscale, Min value = 0 and Min value = 2 on the reference page of its type, which the app's own reader makes of that page)")
 
 
 class StoryEstate(PricedEstate, DepthEstate):
@@ -956,6 +957,19 @@ class TheStory(Base):
         ask(real_box, "cost_meters", handle="r1")
         real = ask(real_box, "price_alternatives", meter="m1")
         self.assertEqual((real["match"], real["current"]["retail"], real["lines"], real["other_units"]), ("found", 0.29, 6, 1), "the shipped row: the base charge against the list of its product")
+
+    def test_the_held_out_rows_are_shown_as_the_real_toolbox_shows_them_in_their_bill_their_list_and_their_profile(self):
+        held = [r for r in ROWS.values() if r["id"].startswith("heldout-") and r.get("meters")]
+        self.assertEqual([r["id"] for r in held], ["heldout-firewall", "heldout-appgw-mincap", "heldout-sql-vcores", "heldout-sql-busy"], "the four rows of other kinds give a bill and a list, as the real words of the list of 2026-11-21 name them")
+        for spec in held:
+            with self.subTest(row=spec["id"]):
+                box = self.real(spec)
+                self.assertEqual(ask(box, "cost_meters", handle="r1"), self.fixture(spec, "cost_meters", handle="r1"), "the same answer, value for value")
+                for number in range(1, len(spec["meters"]) + 1):
+                    real, fake = ask(box, "price_alternatives", meter=f"m{number}"), self.fixture(spec, "price_alternatives", meter=f"m{number}")
+                    self.assertEqual(real, fake, f"m{number}: the lines in the unit of the meter, the line that has its name as current, and the handles")
+                real_profile, fake_profile = ask(box, "profile", handles=["r1"])["profiles"][0], self.fixture(spec, "profile", handles=["r1"])["profiles"][0]
+                self.assertEqual((real_profile["sku"], real_profile["meters"]), (fake_profile["sku"], fake_profile["meters"]))
 
     def test_a_meter_with_no_line_of_its_name_and_lines_that_disagree_say_none_and_several_in_the_real_tool_too_and_a_page_past_the_end_is_empty(self):
         spec = self.invented()

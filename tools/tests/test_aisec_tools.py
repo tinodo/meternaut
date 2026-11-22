@@ -72,6 +72,12 @@ def way(title, high=0.4):
 STORY = "bastion-four-units-full-story"
 
 
+def smaller_share(handle="r1", others=None):
+    """The finding for a resource that has no count to lower, in the shape that the instructions give: a smaller share of one charge, and the other ways that are given."""
+    change = {"action": "reduce", "effects": [{"handle": handle, "meters": ["m1"], "remains": {"form": "assumed", "low": 0.1, "high": 0.3}}], "how": "Use less.", **({"others": others} if others else {})}
+    return {"handles": [handle], "basis": "oversized", "proposal": "change", "metric_evidence": [], "change": change, "confidence": 0.8, "summary": "A tier that few use."}
+
+
 def said(*findings):
     """The last text of an agent that answers these findings."""
     return json.dumps({"findings": list(findings), "examined": ["the resources"]})
@@ -418,7 +424,7 @@ class TheEvaluationFiles(unittest.TestCase):
             ("other", "https://learn.microsoft.com/en-us/azure/bastion/bastion-sku-comparison",
              "Developer SKU isn't suitable for production workloads. It provides access to only one VM at a time and doesn't support virtual network peering."),
             ("other", "https://learn.microsoft.com/en-us/azure/bastion/upgrade-sku", "Once you upgrade, you can't revert to a lower SKU without deleting and reconfiguring Azure Bastion.")])
-        self.assertEqual(len(self.rows()), 34, "the whole story and the floor in the documentation are the 33rd and the 34th row")
+        self.assertEqual([row["id"] for row in self.rows()][32:34], [STORY, "bastion-four-units-floor-in-docs"], "the whole story and the floor in the documentation are the 33rd and the 34th row")
 
     def test_the_floor_row_is_the_host_of_the_whole_story_with_no_limits_no_bill_and_the_one_sentence_of_the_documentation_that_says_the_lowest_number(self):
         rows = {row["id"]: row for row in self.rows()}
@@ -714,6 +720,9 @@ class Project:
             now = row["props"][handle][name]
             others = [way(title, 0.4 + place / 10) for place, title in enumerate(("Use the Lite tier", "Use the Basic tier", "Use the Plus tier")[:row["expect"].get("others", 0)])]
             findings.append(stated(handle, name, now, now - 1, others=others, as_finding=True, metric=row["metric"], total=next(r["total"] for r in row["resources"] if r["h"] == handle)))
+        if row["expect"].get("others") and not row["expect"].get("set"):  # a row that expects other ways and no setting (a firewall has no count to lower): the change is a smaller share of one charge, and the ways are its own
+            titles = ("Use the Lite tier", "Use the Basic tier", "Use the Plus tier")[:row["expect"]["others"]]
+            findings.append(smaller_share(row["resources"][0]["h"], [way(title, 0.4 + place / 10) for place, title in enumerate(titles)]))
         return json.dumps({"findings": findings, "examined": ["the resources"]})
 
 
@@ -736,6 +745,111 @@ class FakeTime:
 
     def sleep(self, seconds):
         self.now += seconds
+
+
+class TheHeldOutRows(unittest.TestCase):
+    """The four rows of other kinds than the host (a firewall, an application gateway and two databases), written on 2026-11-21 from Microsoft's pages and the public price list, after the first candidates of the
+    instructions and tuned on by none: a candidate is promoted only when it is no worse on them than production and better on at least one. What each expects is held here against hand-made answers and the
+    tool's own grade, with no model: a good answer passes, and a decoy, a number outside the range and a number below the floor do not."""
+
+    FIREWALL, GATEWAY, DATABASE, BUSY = "heldout-firewall", "heldout-appgw-mincap", "heldout-sql-vcores", "heldout-sql-busy"
+    OTHER = [way("Use the Basic tier")]
+
+    def setUp(self):
+        self.all = helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40)
+        self.rows = {row["id"]: row for row in self.all}
+
+    def grade(self, row_id, *findings):
+        return evals.grade(self.rows[row_id], said(*findings))
+
+    def delete(self, row_id):
+        row = self.rows[row_id]
+        return {"handles": ["r1"], "basis": "no-usage", "proposal": "delete", "metric_evidence": [{"handle": "r1", "metric": row["metric"], "total": row["resources"][0]["total"]}], "confidence": 0.9, "summary": "x"}
+
+    def lowered(self, row_id, name, now, to, others=None):
+        row = self.rows[row_id]
+        return stated("r1", name, now, to, others=others, as_finding=True, metric=row["metric"], total=row["resources"][0]["total"])
+
+    def test_the_four_rows_are_the_rows_with_the_prefix_and_their_ids_fit_in_the_one_input_of_the_hub_that_names_rows(self):
+        held = [row for row in self.all if row["id"].startswith("heldout-")]
+        self.assertEqual([row["id"] for row in held], [self.FIREWALL, self.GATEWAY, self.DATABASE, self.BUSY])
+        self.assertEqual(len(self.all), 38, "the 34 rows that candidates were tuned on, and these four")
+        joined = ",".join(row["id"] for row in held)
+        self.assertLessEqual(len(joined), 80, "the input evals_only of the Hub takes 80 characters at most, so the four ids are short")
+        self.assertRegex(joined, r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(,[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$")
+        self.assertEqual([row["kind"] for row in held], ["clean", "clean", "clean", "decoy"])
+        self.assertEqual({row["type"] for row in held}, {"microsoft.network/azurefirewalls", "microsoft.network/applicationgateways", "microsoft.sql/servers/databases"}, "kinds that no sentence of the instructions or of a candidate was written for")
+        self.assertNotIn("bastion", json.dumps(held).lower(), "not the host that the candidates were tuned on")
+        for row in held:
+            with self.subTest(row=row["id"]):
+                self.assertEqual([r["h"] for r in row["resources"]], ["r1"])
+                self.assertTrue(row["knowledge"] and row["meters"] and row["prices"] and row["resources"][0]["sku"], "the pages that were read, the bill, the list of the product and the SKU word")
+                self.assertTrue(all(claim["url"].startswith("https://learn.microsoft.com/en-us/azure/") for claim in row["knowledge"]), "every claim is a sentence of a page of Microsoft's documentation")
+
+    def test_each_row_expects_the_one_thing_that_its_kind_gives_and_the_limits_and_the_floor_are_those_of_the_pages(self):
+        app = evals.app_code()[1]
+        firewall, gateway, database, busy = (self.rows[name] for name in (self.FIREWALL, self.GATEWAY, self.DATABASE, self.BUSY))
+        self.assertEqual(firewall["expect"], {"propose": [], "never": ["r1"], "others": 1}, "a change that is no delete, one other way, and no setting")
+        self.assertFalse([name for name in firewall["props"]["r1"] if app.countlike(name)], "a firewall of that tier has no count that a setting could lower: its capacity is automatic")
+        self.assertEqual(gateway["expect"], {"propose": [], "never": ["r1"], "set": ["r1:autoscaleConfiguration.minCapacity"], "others": 1})
+        self.assertEqual(gateway["limits"], {"r1": {"autoscaleConfiguration.minCapacity": {"lowest": 0}, "autoscaleConfiguration.maxCapacity": {"lowest": 2}}}, "what the app's own reader makes of the reference page of the type: Min value = 0 and Min value = 2")
+        self.assertEqual((gateway["props"]["r1"]["autoscaleConfiguration.minCapacity"], gateway["props"]["r1"]["autoscaleConfiguration.maxCapacity"]), (10, 20), "a nested count, at the minimum of the autoscale")
+        self.assertEqual(database["expect"], {"propose": [], "never": ["r1"], "set": ["r1:sku.capacity"], "set_floor": {"r1:sku.capacity": 2}, "others": 1})
+        self.assertNotIn("limits", database, "no limit shows the lowest number: the one claim that says it is a row of the table of the page of the model")
+        self.assertIn("Compute size 2 to 128 vCores 2 to 128 vCores 2 to 192 vCores", [claim["quote"] for claim in database["knowledge"]])
+        self.assertEqual(database["props"]["r1"]["sku.capacity"], 16, "at the root of the resource, where the envelope has its sku")
+        self.assertEqual((busy["kind"], busy["expect"]), ("decoy", {"propose": [], "never": ["r1"], "never_set": ["r1"]}))
+        for key in ("type", "service", "metric", "unit", "props", "meters", "prices", "knowledge"):
+            self.assertEqual(busy[key], database[key], f"{key}: the same database, and only its use differs")
+        self.assertEqual((database["resources"][0]["average"], busy["resources"][0]["average"], busy["resources"][0]["max"]), (3, 70, 95), "about 3 percent of the CPU, and about 70 with a peak of 95")
+        self.assertEqual(database["resources"][0]["usd"], busy["resources"][0]["usd"], "the bill is the same: 16 vCores for 24 hours at the list price of the vCore")
+
+    def test_the_prices_and_the_bills_are_the_lines_and_the_words_of_the_public_list_of_sweden_central_read_on_2026_11_21(self):
+        firewall, gateway, database = (self.rows[name] for name in (self.FIREWALL, self.GATEWAY, self.DATABASE))
+        self.assertEqual({line["meter"]: (line["sku"], line["usd"], line["unit"]) for line in firewall["prices"]}, {
+            "Basic Deployment": ("Basic", 0.395, "1 Hour"), "Basic Data Processed": ("Basic", 0.065, "1 GB"), "Standard Deployment": ("Standard", 1.25, "1 Hour"),
+            "Standard Data Processed": ("Standard", 0.016, "1 GB"), "Premium Deployment": ("Premium", 1.75, "1 Hour"), "Premium Data Processed": ("Premium", 0.016, "1 GB")}, "the deployment and the data lines of the three tiers")
+        self.assertEqual([(m["name"], m["unit"], m["per_day"], m["usd_per_unit"]) for m in firewall["meters"]], [("Standard Deployment", "1 Hour", 24, 1.25), ("Standard Data Processed", "1 GB", 6.25, 0.016)])
+        self.assertEqual({line["meter"]: (line["usd"], line["unit"]) for line in gateway["prices"]}, {"Standard Fixed Cost": (0.468, "1/Hour"), "Standard Capacity Units": (0.0144, "1/Hour"), "Standard Captcha Sessions": (0.4, "1K")},
+                         "the whole list of the product of the WAF tier: the lines of the other tiers are lines of other products")
+        self.assertEqual([(m["name"], m["per_day"], m["usd_per_unit"]) for m in gateway["meters"]], [("Standard Capacity Units", 2400, 0.0144), ("Standard Fixed Cost", 24, 0.468)], "10 instances reserve 100 capacity units, all day")
+        self.assertEqual(database["prices"], [{"sku": "vCore", "meter": "vCore", "usd": 0.167439, "unit": "1 Hour"}], "the line of the vCore: the lines of the other sizes and of the serverless compute are named by words that the tools do not show")
+        self.assertEqual([(m["name"], m["per_day"], m["usd_per_unit"]) for m in database["meters"]], [("vCore", 384, 0.167439)], "16 vCores for 24 hours")
+        self.assertFalse(evals.meter_word("8 vCore"), "a word that is none of the tools' own: the real tool shows no such line, so no row can")
+
+    def test_a_good_answer_passes_for_the_firewall_and_a_decoy_does_not(self):
+        good = self.grade(self.FIREWALL, smaller_share("r1", self.OTHER))
+        self.assertEqual((good["others_found"], good["ways"], good["settings"], good["decoys"], good["grounded"]), (1.0, 1, 0, 0, True))
+        self.assertEqual(self.grade(self.FIREWALL, smaller_share("r1"))["others_found"], 0.0, "a change with no other way is not what the row expects")
+        self.assertEqual(self.grade(self.FIREWALL, self.delete(self.FIREWALL))["decoys"], 1, "a firewall that processes data is never deleted")
+        asked = self.grade(self.FIREWALL, self.lowered(self.FIREWALL, "capacityUnits", 4, 2, self.OTHER))
+        self.assertEqual((asked["settings"], asked["others_found"]), (0, 1.0), "a setting that no tool showed is dropped, and the other way stays")
+
+    def test_a_good_answer_passes_for_the_gateway_and_the_documented_range_the_decoys_and_a_property_that_is_not_the_one_do_not(self):
+        name = "autoscaleConfiguration.minCapacity"
+        good = self.grade(self.GATEWAY, self.lowered(self.GATEWAY, name, 10, 2, self.OTHER))
+        self.assertEqual((good["set_found"], good["others_found"], good["settings"], good["ways"], good["decoys"], good["grounded"]), (1.0, 1.0, 1, 1, 0, True))
+        self.assertEqual(good["priced"]["set"], {"low": 829.44, "high": 829.44}, "8 of the 10 reserved instances' 100 capacity units are 80 units at 0.0144 for 720 hours")
+        self.assertEqual(self.grade(self.GATEWAY, self.lowered(self.GATEWAY, name, 10, 0))["set_found"], 1.0, "the page allows 0: a gateway that is purely autoscaling")
+        for to in (-1, 10, 11):
+            self.assertEqual(self.grade(self.GATEWAY, self.lowered(self.GATEWAY, name, 10, to))["settings"], 0, f"{to} is not a smaller number inside the range")
+        other_property = self.grade(self.GATEWAY, self.lowered(self.GATEWAY, "autoscaleConfiguration.maxCapacity", 20, 10, self.OTHER))
+        self.assertEqual((other_property["settings"], other_property["set_found"], other_property["others_found"]), (1, 0.0, 1.0), "the maximum is kept as a setting, and it is not the one that the row expects")
+        self.assertEqual(self.grade(self.GATEWAY, self.lowered(self.GATEWAY, "autoscaleConfiguration.maxCapacity", 20, 1))["settings"], 0, "the page says Min value = 2 for the maximum: 1 is outside the range")
+        self.assertEqual(self.grade(self.GATEWAY, self.delete(self.GATEWAY))["decoys"], 1)
+
+    def test_a_good_answer_passes_for_the_database_the_floor_is_respected_and_the_busy_one_is_left_alone(self):
+        name = "sku.capacity"
+        good = self.grade(self.DATABASE, self.lowered(self.DATABASE, name, 16, 8, self.OTHER))
+        self.assertEqual((good["set_found"], good["others_found"], good["settings"], good["ways"], good["decoys"], good["grounded"]), (1.0, 1.0, 1, 1, 0, True))
+        self.assertEqual(good["priced"]["set"], {"low": 964.5, "high": 964.5}, "half of the compute: 192 of 384 vCore hours a day at 0.167439 for 30 days")
+        self.assertEqual(self.grade(self.DATABASE, self.lowered(self.DATABASE, name, 16, 2))["set_found"], 1.0, "the floor is reached exactly")
+        under = self.grade(self.DATABASE, self.lowered(self.DATABASE, name, 16, 1))
+        self.assertEqual((under["settings"], under["set_found"], under["below"]), (1, 0.0, ["r1:sku.capacity to 1, the floor is 2"]), "no limit refuses 1, so the app keeps it, and the grader holds it to the floor of the platform")
+        self.assertEqual(self.grade(self.DATABASE, self.delete(self.DATABASE))["decoys"], 1)
+        self.assertEqual((self.grade(self.BUSY)["decoys"], self.grade(self.BUSY)["settings"]), (0, 0), "no finding is the good answer for a database in use")
+        self.assertEqual(self.grade(self.BUSY, self.lowered(self.BUSY, name, 16, 8, self.OTHER))["decoys"], 1, "a setting that the app would keep is a decoy for a database that its CPU shows is in use")
+        self.assertEqual(self.grade(self.BUSY, self.delete(self.BUSY))["decoys"], 1)
 
 
 class TheEvaluations(unittest.TestCase):
@@ -1019,9 +1133,10 @@ class TheEvaluations(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertRegex(out, r"PASS settingFoundRate 1\.00 \(at least 0\.5\)")
         self.assertRegex(out, r"PASS expectedFoundRate 1\.00 ")
-        # Two rows of the host that a few use (with and without the limits that the page gives), the row of its whole story and the row of its floor in the documentation ask for a setting, and the row of the host
-        # in use asks for none: five rows that ask, four settings kept (the floor is 2 and the double states 2), and one other way kept (the whole story is the one row that expects another way).
-        self.assertIn("run: settings kept 4, other ways kept 1, in 5 fixtures that ask for a setting", out)
+        # Nine rows ask. Five are the host with four units: two of the host that a few use (with and without the limits that the page gives), the row of its whole story and the row of its floor in the
+        # documentation ask for a setting, and the row of the host in use asks for none; four settings and one other way (the whole story) are kept. The four held-out rows of other kinds (2026-11-21) add
+        # the firewall (one other way, no setting), the gateway and the database (one setting and one other way each) and the busy database (none): six settings kept, four other ways kept.
+        self.assertIn("run: settings kept 6, other ways kept 4, in 9 fixtures that ask for a setting", out)
         self.assertNotIn("miss:", out)
 
     def test_an_agent_that_states_no_setting_fails_the_rate_and_the_miss_line_says_that_it_missed_the_set(self):
@@ -1070,6 +1185,16 @@ class TheEvaluations(unittest.TestCase):
         self.assertIn("run: settings kept 1, other ways kept 2, in 1 fixture that asks for a setting", out)
 
     CALLS = [("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m1"})]
+
+    def test_the_four_held_out_rows_are_replayed_by_their_ids_alone_and_the_perfect_agent_passes_them(self):
+        held = [row["id"] for row in helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40) if row["id"].startswith("heldout-")]
+        code, out, _, _ = self.go(self.project(only=held), "--judge", "none", "--only", ",".join(held))
+        self.assertEqual(code, 0, out)
+        for name in ("settingFoundRate", "othersFoundRate", "decoyProposals"):
+            self.assertRegex(out, rf"PASS {name} ")
+        self.assertIn("UNKNOWN expectedFoundRate: no fixture that was replayed expects it", out, "none of the four expects a removal")
+        self.assertIn("run: settings kept 2, other ways kept 3, in 4 fixtures that ask for a setting", out, "the firewall asks for another way, the gateway and the database for a setting and another way, the busy database for none")
+        self.assertNotIn("miss:", out)
 
     def test_the_perfect_agent_passes_the_whole_story_alone_and_a_replay_that_never_showed_the_bill_prices_nothing(self):
         code, out, _, _ = self.go(self.project(only=[STORY]), "--only", STORY)

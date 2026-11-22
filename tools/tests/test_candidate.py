@@ -806,8 +806,15 @@ class TheRecordOfTheCandidates(unittest.TestCase):
                       "**After a promotion the candidate file is rewritten or dropped.**", "Any edit of the instructions makes that test fail", "also rewrites the candidate file against the new production text, or drops it"):
             self.assertIn(words, self.SECTION)
 
-    def test_it_says_plainly_that_there_is_no_held_out_set_and_that_only_the_replay_tool_promotes_nothing(self):
-        self.assertIn("There is no held-out set. A candidate is tuned and judged on the same rows", self.SECTION)
+    def test_it_says_plainly_that_the_held_out_set_is_small_and_names_its_four_rows_and_that_only_the_replay_tool_promotes_nothing(self):
+        # Until the four held-out rows were written (2026-11-21) this said that there is none: that sentence is false now, and what is true is the limit of four rows of three kinds, which it says as plainly.
+        self.assertIn("The held-out set is small. Four rows of three kinds that no candidate was tuned on decide a release together with the rest", self.SECTION)
+        self.assertIn("a better score on them alone is weak evidence", self.SECTION)
+        self.assertNotIn("There is no held-out set", self.SECTION)
+        item = self.SECTION[self.SECTION.index("**The held-out rows.**"):]
+        for words in ("`heldout-firewall`, `heldout-appgw-mincap`, `heldout-sql-vcores` and `heldout-sql-busy`", "the candidate is no worse on them than production and better on at least one", "**no candidate was tuned on them**",
+                      "**What they do not prove:**", "No replay has used these rows yet."):
+            self.assertIn(words, item)
         self.assertIn("A replay tool may suggest, test and measure. It never promotes.", self.SECTION)
         self.assertIn("**Nothing is promoted by the replay tool.** No replay tool writes the production agent, the lock or the instructions, or decides a release", self.SECTION)
         self.assertNotIn("A tool may suggest", self.SECTION, "agents-lock writes the lock and the instructions, and agents-ready makes versions: it is the replay tool that promotes nothing")
