@@ -2042,16 +2042,26 @@ class ThePricedCheck(unittest.TestCase):
         only_alternative = switching("Use the Basic tier for the base charge", [{"meters": ["m1"], "remains": {"form": "alternative", "price": "p2"}}])
         self.assertEqual(self.priced(lowering(others=[only_alternative]))["others"], [{"low": 72.0, "high": 72.0}], "a price of the list is no estimate: 208.8 less 208.8 x 0.19 over 0.29")
 
-    def test_a_switch_is_priced_only_from_a_price_that_a_tool_showed_for_that_meter_and_what_could_not_be_counted_is_said(self):
-        for label, calls in (("no list was read", [("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"})]),
-                             ("the list of another meter was read", [("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m2"})])):
-            with self.subTest(label=label):
-                got = self.priced(lowering(others=[BASIC, FREE]), traced(self.row, *calls))
-                self.assertEqual(got["others"], [{"low": 201.6, "high": 201.6, "estimate": True, "skipped": 1}, {"low": 410.4, "high": 410.4, "estimate": True}],
-                                 "the price of the Basic tier is not offered for the base charge, so that part is not counted, and the figure is the rest")
+    def test_a_switch_is_priced_only_from_a_price_that_a_tool_showed_for_that_meter_or_for_a_meter_that_shares_its_list_and_what_could_not_be_counted_is_said(self):
+        # The list of the additional charge (m2) is the list of the base charge (m1): the same product and the same unit of the same resource. It once counted for the meter that was asked about alone.
+        got = self.priced(lowering(others=[BASIC, FREE]), traced(self.row, ("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"})))
+        self.assertEqual(got["others"], [{"low": 201.6, "high": 201.6, "estimate": True, "skipped": 1}, {"low": 410.4, "high": 410.4, "estimate": True}],
+                         "no list was read, so the price of the Basic tier is not offered for the base charge, that part is not counted, and the figure is the rest")
+        other = traced(self.row, ("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m2"}))
+        self.assertEqual(self.priced(lowering(others=[BASIC, FREE]), other)["others"], [{"low": 273.6, "high": 273.6, "estimate": True}, {"low": 410.4, "high": 410.4, "estimate": True}],
+                         "the list was read for the additional charge: it is the list of the base charge, which is priced with the list price of its own line")
         self.assertEqual(self.priced(lowering(others=[BASIC]), self.full)["others"], [{"low": 273.6, "high": 273.6, "estimate": True}])
         unlisted = switching("Use a tier that nobody listed", [{"meters": ["m1"], "remains": {"form": "alternative", "price": "p9"}}])
         self.assertEqual(self.priced(lowering(others=[unlisted]), self.full)["others"], [self.not_priced("alternative")], "kept, and with no figure")
+
+    def test_a_charge_that_the_answer_says_is_gone_in_a_switch_is_priced_as_a_share_that_the_ai_assumes_and_a_whole_switch_to_nothing_is_the_whole_cost(self):
+        stated = switching("Recreate as the Basic tier", [{"meters": ["m1"], "remains": {"form": "alternative", "price": "p2"}}, {"meters": ["m2"], "remains": {"form": "none"}}])
+        free = switching("Use the free tier", [{"meters": ["m1", "m2"], "remains": {"form": "none"}}])
+        for label, trace in (("every meter of the row counts as shown", None), ("the list was read for the additional charge only", traced(self.row, ("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}),
+                                                                                                                                              ("price_alternatives", {"meter": "m2"})))):
+            with self.subTest(label=label):
+                self.assertEqual(self.priced(lowering(others=[stated, free]), trace)["others"], [{"low": 273.6, "high": 273.6, "estimate": True}, {"low": 410.4, "high": 410.4, "estimate": True}],
+                                 "the base charge at 0.19 over 0.29 and the additional charge that the answer says is gone; and the whole of both charges for the switch to nothing: both rest on what the AI says")
 
     def test_only_what_the_tools_of_the_replay_showed_is_priced(self):
         nothing = {"set": None, "others": [self.not_priced("lines"), self.not_priced("lines")]}
@@ -2196,14 +2206,22 @@ class ThePrintedShapeOfAWay(unittest.TestCase):
 
     def test_an_effect_of_two_meters_is_not_priced_and_the_line_says_how_many_meters_it_names_and_for_which_the_tool_was_asked(self):
         two = switching("Use the Basic tier", [{"meters": ["m1", "m2"], "remains": {"form": "alternative", "price": "p2"}}])
+        # m2 was not asked about, but it has the product and the unit of m1, whose list was read: the app counts that list as shown for it (cases/toolbox.py), and the line says so. It said "no such call".
         self.assertEqual(self.of(self.block(lowering(others=[two])), "other way 1"), [
             "- other way 1 not priced, app key: remains",
-            "- other way 1 effect 1: r1, meters m1, m2, form alternative p2; offered for m1 yes, m2 no such call; price list read for m1; one meter differs, price ok, tiers ok; not priced alone, key remains"])
+            "- other way 1 effect 1: r1, meters m1, m2, form alternative p2; offered for m1 yes, m2 yes (it shares the list of m1); price list read for m1; one meter differs, price ok, tiers ok; not priced alone, key remains"])
 
-    def test_a_none_effect_under_the_action_switch_says_that_the_app_does_not_allow_that_form_for_that_action(self):
+    def test_a_none_effect_under_the_action_switch_is_priced_as_a_share_that_the_ai_assumes_and_under_another_action_the_line_says_that_the_app_does_not_allow_it(self):
+        # In a switch `none` says that the new price has no counterpart for the charge (cases/pricing.py): it is allowed and is an estimate. The line said that the app refused it.
         removal = switching("Remove the extra instances", [{"meters": ["m2"], "remains": {"form": "none"}}])
-        self.assertEqual(self.of(self.block(lowering(others=[removal])), "other way 1"), [
-            "- other way 1 not priced, app key: remains", "- other way 1 effect 1: r1, meter m2, form none, not allowed for the action switch; not priced alone, key remains"])
+        block = self.block(lowering(others=[removal]))
+        self.assertEqual(self.of(block, "other way 1"), ["- other way 1 effect 1: r1, meter m2, form none; priced alone"])
+        self.assertIn("saves 201.6 USD a month (estimate)", next(line for line in block if line.startswith("- other way 1 (kept)")))
+        for action in ("reduce", "schedule", "commit"):
+            with self.subTest(action=action):
+                way = {"title": "Remove the extra instances", "gives_up": "Nothing.", "in_place": True, "change": {"action": action, "effects": [{"handle": "r1", "meters": ["m2"], "remains": {"form": "none"}}]}}
+                self.assertEqual(self.of(self.block(lowering(others=[way])), "other way 1"), [
+                    "- other way 1 not priced, app key: remains", f"- other way 1 effect 1: r1, meter m2, form none, not allowed for the action {action}; not priced alone, key remains"])
 
     def test_an_effect_of_a_handle_that_no_tool_showed_is_not_read_and_the_line_says_so_with_no_text_of_the_answer(self):
         lost = switching("Use the Basic tier", [{"handle": "r9", "meters": ["m1"], "remains": {"form": "alternative", "price": "p2"}}])
@@ -2316,15 +2334,16 @@ class ThePrintedShapeOfAWay(unittest.TestCase):
         unknown = lowering()
         unknown["change"]["effects"] = [{"handle": "r1", "meters": ["m2"], "remains": {"form": "alternative", "price": "p99"}}, quantity]
         block = self.block(unknown)
+        # m2 shares the product and the unit of m1, whose list was read, so the line says no and says through which meter (it said "no such call", before a list counted for the meters that share it)
         self.assertEqual(self.of(block, "change"), [
-            "- change effect 1: r1, meter m2, form alternative p99, not allowed for the action reduce; offered for m2 no such call; price list read for m1; the price handle is none of the lines of this run; one meter ok; "
+            "- change effect 1: r1, meter m2, form alternative p99, not allowed for the action reduce; offered for m2 no (it shares the list of m1); price list read for m1; the price handle is none of the lines of this run; one meter ok; "
             "not priced alone, key remains", "- change effect 2: r1, meter m2, form quantity from 1440 to 0; priced alone"])
         self.assertEqual(self.shared(block, "change"), [f"- change meter m2 is named by effects 1 and 2{self.TAIL}"])
         way = switching("Use a tier", [{"meters": ["m2"], "remains": {"form": "alternative", "price": "p99"}}, {"meters": ["m2"], "remains": {"form": "assumed", "low": 0.1, "high": 0.2}}])
         block = self.block(lowering(others=[way]))
         self.assertEqual(self.of(block, "other way 1"), [
             "- other way 1 not priced, app key: alternative",
-            "- other way 1 effect 1: r1, meter m2, form alternative p99; offered for m2 no such call; price list read for m1; the price handle is none of the lines of this run; one meter ok; not priced alone, key alternative",
+            "- other way 1 effect 1: r1, meter m2, form alternative p99; offered for m2 no (it shares the list of m1); price list read for m1; the price handle is none of the lines of this run; one meter ok; not priced alone, key alternative",
             "- other way 1 effect 2: r1, meter m2, form assumed low 0.1, high 0.2; priced alone"], "the way is not priced, and the second effect says that it is priced alone: the last line says why they differ")
         self.assertEqual(self.shared(block, "other way 1"), [f"- other way 1 meter m2 is named by effects 1 and 2{self.TAIL}"])
         three = switching("Use a tier", [{"meters": ["m1", "m2"], "remains": {"form": "assumed", "low": 0.1, "high": 0.2}}, {"meters": ["m2"], "remains": {"form": "assumed", "low": 0.1, "high": 0.2}},
@@ -2396,9 +2415,29 @@ class ThePrintedShapeOfAWay(unittest.TestCase):
     def test_a_replay_that_asked_the_tool_about_another_meter_only_says_so_and_for_which_the_list_was_read(self):
         way = switching("Use the Basic tier", [{"meters": ["m1"], "remains": {"form": "alternative", "price": "p2"}}])
         calls = traced(self.row, ("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m2"}))
+        # The answer of the first replay of the candidate: the list was read for m2 and the price was used for m1. m1 has the product and the unit of m2, so the list is its list too (cases/toolbox.py): the app prices
+        # the way, and the line says through which meter. It said "no such call" and "not priced alone, key alternative".
         self.assertEqual(self.of(self.block(lowering(others=[way]), calls), "other way 1"), [
-            "- other way 1 not priced, app key: alternative",
-            f"- other way 1 effect 1: r1, meter m1, form alternative p2; offered for m1 no such call; price list read for m2; {self.ALL_OK}; not priced alone, key alternative"], "the answer of the first replay of the candidate")
+            f"- other way 1 effect 1: r1, meter m1, form alternative p2; offered for m1 yes (it shares the list of m2); price list read for m2; {self.ALL_OK}; priced alone"])
+        row = TheBillOfAHost.ROW  # m3 is billed per GB: the list that was read for it is not the list of m1
+        apart = traced(row, ("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m3"}))
+        finding = {"handles": ["r1"], "basis": "oversized", "proposal": "change", "metric_evidence": [], "confidence": 0.8, "summary": "x",
+                   "change": {"action": "switch", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "alternative", "price": "p1"}}], "how": "x"}}
+        lines = [line[len(row["id"]) + 2:] for line in evals.answer_lines(row, said(finding), apart, evals.shown_properties(apart), evals.shown_bill(apart))]
+        self.assertEqual([line for line in lines if line.startswith("- change effect")], [
+            f"- change effect 1: r1, meter m1, form alternative p1; offered for m1 no such call; price list read for m3; {self.ALL_OK}; not priced alone, key alternative"], "a meter that shares no list with the one that was asked about")
+
+    def test_a_meter_that_the_tool_was_asked_about_is_offered_what_its_own_read_showed_and_the_line_names_no_sibling_for_it(self):
+        both = traced(self.row, ("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m1"}), ("price_alternatives", {"meter": "m2"}))
+        # m1 and m2 share a list and both were asked about, so neither is offered the price through the other: the line says plain yes, and not "it shares the list of m1" for the second
+        second = switching("Use the Basic tier", [{"meters": ["m2"], "remains": {"form": "alternative", "price": "p2"}}])
+        self.assertEqual(self.of(self.block(lowering(others=[second]), both), "other way 1"), [
+            "- other way 1 not priced, app key: dearer",
+            f"- other way 1 effect 1: r1, meter m2, form alternative p2; offered for m2 yes; price list read for m1, m2; {self.ALL_OK}; not priced alone, key dearer"])
+        pair = switching("Use the Basic tier", [{"meters": ["m1", "m2"], "remains": {"form": "alternative", "price": "p2"}}])
+        self.assertEqual(self.of(self.block(lowering(others=[pair]), both), "other way 1"), [
+            "- other way 1 not priced, app key: remains",
+            "- other way 1 effect 1: r1, meters m1, m2, form alternative p2; offered for m1 yes, m2 yes; price list read for m1, m2; one meter differs, price ok, tiers ok; not priced alone, key remains"])
 
     def test_the_other_ways_are_priced_without_the_hold_back_of_the_change_so_a_ranged_setting_leaves_a_way_priced(self):
         way = switching("Use the Basic tier", [{"meters": ["m1"], "remains": {"form": "alternative", "price": "p2"}}])
@@ -2409,9 +2448,10 @@ class ThePrintedShapeOfAWay(unittest.TestCase):
 
     def test_two_meters_and_a_price_handle_that_is_none_of_the_lines_still_say_that_one_meter_is_what_the_app_prices(self):
         two = switching("Use the Basic tier", [{"meters": ["m1", "m2"], "remains": {"form": "alternative", "price": "p99"}}])
+        # m2 shares the list that was read for m1 (it said "no such call"), so it is offered the lines of that list, and p99 is none of them
         self.assertEqual(self.of(self.block(lowering(others=[two])), "other way 1"), [
             "- other way 1 not priced, app key: remains",
-            "- other way 1 effect 1: r1, meters m1, m2, form alternative p99; offered for m1 no, m2 no such call; price list read for m1; the price handle is none of the lines of this run; one meter differs; "
+            "- other way 1 effect 1: r1, meters m1, m2, form alternative p99; offered for m1 no, m2 no (it shares the list of m1); price list read for m1; the price handle is none of the lines of this run; one meter differs; "
             "not priced alone, key remains"])
 
     def test_a_row_that_gives_no_bill_prints_none_of_these_lines(self):
