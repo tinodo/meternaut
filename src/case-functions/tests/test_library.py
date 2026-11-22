@@ -71,6 +71,8 @@ class TheAddressesThatMayBeRead(unittest.TestCase):
             self.assertIsNone(library.doc_url(bad), bad)
 
     def test_nothing_else_may_be_read_not_a_host_a_scheme_a_port_a_query_that_is_no_view_a_fragment_or_a_path_that_leaves_the_folder(self):
+        # Until 2026-11-22 this test refused every query and used `?view=1` as its example. Learn answers each Azure SQL page with a redirect to `?view=azuresql`, so a page of Learn may now carry that
+        # one parameter, and `?view=1` is allowed (the tests that follow hold its form): the example of a query that is refused here is `?y=1`, which is no view.
         for bad in ("https://example.com/en-us/azure/x", "http://learn.microsoft.com/en-us/azure/x", "https://learn.microsoft.com:443/en-us/azure/x", "https://user@learn.microsoft.com/en-us/azure/x",
                     "https://learn.microsoft.com/en-us/azure/x?y=1", "https://learn.microsoft.com/en-us/azure/x#part", "https://learn.microsoft.com/azure/x", "https://learn.microsoft.com/en-gb/azure/x",
                     "https://learn.microsoft.com/en-us/", "https://learn.microsoft.com/en-us", "https://learn.microsoft.com/en-us/azure/../x", "https://learn.microsoft.com/en-us/azure/./x",
@@ -319,6 +321,17 @@ class TheLibraryAndItsTool(unittest.TestCase):
         self.assertEqual(library.rechecked(made, library_of(web), TIME + dt.timedelta(days=8)).state, "fresh", "a claim is read again by the same way")
         self.assertEqual(self.ask(lib, url=there, offset=None)["url"], there, "the address with its view is a page of its own")
         self.assertEqual(sorted(lib.pages), [TIERS, there])
+
+    def test_the_request_that_is_made_for_a_view_is_the_address_itself_and_never_the_filter_of_the_price_list(self):
+        names = ("scale-resources", "serverless-tier-overview", "service-tiers-sql-database-vcore")
+        asked = [f"https://learn.microsoft.com/en-us/azure/azure-sql/database/{name}" for name in names]
+        web = Web({**{url: (302, {"location": f"/en-us/azure/azure-sql/database/{name}?view=azuresql"}, b"") for url, name in zip(asked, names)}, **{url + "?view=azuresql": html() for url in asked}})
+        lib = library_of(web)
+        answers = [self.ask(lib, url=url, offset=None) for url in asked]
+        self.assertEqual([call[0:2] for call in web.calls], [("GET", address) for url in asked for address in (url, url + "?view=azuresql")],
+                         "each request is the address that was asked and then the address that Learn named, byte for byte: a builder that took the view for the filter of the price list sent `?$filter=resql`")
+        self.assertEqual([call[1] for call in web.calls if "$filter" in call[1]], [])
+        self.assertEqual([SENTENCE in answer.get("text", "") for answer in answers], [True, True, True])
 
     def test_a_redirect_to_a_view_may_be_a_new_path_or_an_absolute_address_and_each_hop_is_checked_as_it_is_followed(self):
         a, b, c, d = (f"https://learn.microsoft.com/en-us/azure/example-gadgets/hop-{n}" for n in range(4))
