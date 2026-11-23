@@ -3,6 +3,7 @@
 Every kind of resource, property and word here is invented. An entry is kept only when code can compare it with what the tools showed in the same run; one that fails is dropped by itself and
 counted, and the finding stays. The Skeptic is shown what was kept, and the facts of a case keep it as typed data (the words of the pages are another piece of work).
 """
+import datetime as dt
 import json
 import re
 import unittest
@@ -10,8 +11,8 @@ from collections import Counter
 from dataclasses import replace
 from unittest import mock
 
-from test_investigate import (FakeFoundry, FakeToolbox, Harness, Moving, ScriptedAgent, answer, banned_in, built, disks_estate, entry, finding, key_of, loop_for, meter_line, metrics, resource,
-                              verdicts)
+from test_investigate import (METER_WORDS, FakeFoundry, FakeToolbox, Harness, Moving, ScriptedAgent, answer, banned_in, built, disks_estate, entry, finding, key_of, loop_for, meter_line, metrics,
+                              resource, verdicts)
 
 from cases import agents, brief, investigate, models, pricing, proposals
 from cases.prices import Line as Listed
@@ -456,7 +457,8 @@ class WhatCodeKeepsOfTheOtherWays(unittest.TestCase):
     def test_a_way_that_cannot_be_priced_is_kept_with_no_figure(self):
         unnamed = {**LITE, "change": {**LITE["change"], "effects": [{"handle": "r1", "meters": ["m9"], "remains": {"form": "none"}}], "action": "remove"}}
         found = checked(reduce(others=[unnamed]), price=priced_by_the_bill())
-        self.assertEqual(found.ways["r1"]["others"], [{"title": "Use the Lite tier", "givesUp": LITE["gives_up"], "action": "remove", "inPlace": False}])
+        # It also keeps the word of the reason that the pricing gave (no bill line m9 was shown for this resource), which the page says: it used to keep nothing, and the page said only that it was not priced.
+        self.assertEqual(found.ways["r1"]["others"], [{"title": "Use the Lite tier", "givesUp": LITE["gives_up"], "action": "remove", "inPlace": False, "why": "lines"}])
         (one,) = proposals.others({proposals.KEY: found.ways["r1"]})
         self.assertEqual((one.low, one.high), (None, None), "the page says that it is not priced")
 
@@ -584,7 +586,8 @@ class WhenAWayCostsAsMuchOrMore(unittest.TestCase):
         for why in (why for why in pricing.WHY if why != "dearer"):
             with self.subTest(why=why):
                 found = checked(reduce(others=[self.LARGE]), price=stopped_at({"m2": why}))
-                self.assertEqual(found.ways["r1"]["others"], [{"title": "Use the Large tier", "givesUp": "Fewer units.", "action": "switch", "inPlace": False}])
+                # kept with no figure, as it always was, and now with the word of its reason, which the page says (the entry used to hold nothing but its words)
+                self.assertEqual(found.ways["r1"]["others"], [{"title": "Use the Large tier", "givesUp": "Fewer units.", "action": "switch", "inPlace": False, "why": why}])
                 self.assertEqual(found.dropped, Counter())
 
     def test_a_way_that_no_bill_could_price_is_kept_with_no_figure_and_so_is_one_that_the_price_says_nothing_of(self):
@@ -662,6 +665,181 @@ class WhenAnInvestigationMeetsAWayThatCostsMore(unittest.TestCase):
         (kept,) = ways_of(h)["others"]
         self.assertEqual((kept["title"], "lowUsd" in kept), ("Use the Large tier", False))
         self.assertEqual([e for e in h.notes if "dropped" in e], [])
+
+
+def priced_skipping(skipped: int, form: str = "assumed"):
+    """A price that gives a way the figure of a row (20 to 40 dollars) that leaves out `skipped` of the things that the AI named."""
+    row = pricing.Row("r1", 20.0, 40.0, 200.0, 1, form, {}, None, skipped, ("m1",), 200.0, None, None, 0, None)
+    return lambda option: pricing.Priced(option.action, {"r1": row})
+
+
+class WhatAWayKeepsOfWhatCodeCouldNotPrice(unittest.TestCase):
+    """A way that has no figure keeps the word of cases/pricing.py WHY that code stopped at (`why`), and a way whose figure leaves out things that the AI named keeps how many (`skipped`): a closed word
+    and a number, taken from the price and never from a word of the AI. A way that nothing said anything of keeps neither."""
+
+    LARGE = via("Use the Large tier", "m2")
+
+    def test_a_way_that_has_no_figure_keeps_the_word_of_the_reason_for_every_reason_that_the_app_has_and_the_order_of_its_keys(self):
+        for why in proposals.NOT_PRICED:
+            with self.subTest(why=why):
+                (entry,) = checked(reduce(others=[self.LARGE]), price=stopped_at({"m2": why})).ways["r1"]["others"]
+                self.assertEqual(entry, {"title": "Use the Large tier", "givesUp": "Fewer units.", "action": "switch", "inPlace": False, "why": why})
+                self.assertEqual(list(entry), ["title", "givesUp", "action", "inPlace", "why"])
+                self.assertEqual(proposals.others({proposals.KEY: {"others": [entry]}})[0].why, why)
+
+    def test_a_reason_that_the_table_has_no_words_for_is_not_kept_because_a_way_that_said_it_would_be_said_to_be_not_priced_and_no_more(self):
+        (entry,) = checked(reduce(others=[self.LARGE]), price=stopped_at({"m2": "a-reason-that-the-pricing-may-gain"})).ways["r1"]["others"]
+        self.assertNotIn("why", entry)
+
+    def test_the_real_pricing_gives_the_reason_for_a_way_that_names_a_charge_that_no_tool_showed_and_for_a_price_that_no_tool_showed(self):
+        box = with_list(invented(1))
+        price = lambda option: pricing.price(option, ["r1"], box, COSTS, None, meter_word)
+        unknown_meter = via("Use the Lite tier", "m9", "p1")
+        unknown_price = via("Use the Medium tier", "m1", "p99")
+        found = checked(reduce(others=[unknown_meter, unknown_price]), price=price)
+        self.assertEqual([(entry["title"], entry["why"]) for entry in found.ways["r1"]["others"]], [("Use the Lite tier", "lines"), ("Use the Medium tier", "alternative")])
+        self.assertEqual(found.dropped, Counter())
+
+    def test_a_way_of_several_effects_keeps_no_reason_because_the_pricing_keeps_the_first_reason_only_and_a_sentence_that_is_true_of_one_effect_may_be_false_of_the_way(self):
+        box = with_list(invented(1))
+        effect = lambda meters: {"handle": "r1", "meters": meters, "remains": {"form": "none"}}
+        way_of = lambda *effects: {**REMOVE, "change": {"action": "remove", "effects": list(effects), "how": "Delete it."}}
+        no_charge_then_one_that_no_tool_showed = way_of(effect([]), effect(["m9"]))
+        priced = priced_by_the_bill(box)(pricing.parse({"action": "remove", "effects": no_charge_then_one_that_no_tool_showed["change"]["effects"]}))
+        self.assertEqual(priced.why, {"r1": "none"}, "the pricing says `none` for the first effect, though the second names a charge")
+        (several,) = checked(reduce(others=[no_charge_then_one_that_no_tool_showed]), price=priced_by_the_bill(box)).ways["r1"]["others"]
+        self.assertNotIn("why", several, "`The AI named no charge` is false of this way: it names one in its second effect")
+        (alone,) = checked(reduce(others=[way_of(effect([]))]), price=priced_by_the_bill(box)).ways["r1"]["others"]
+        self.assertEqual(alone["why"], "none", "a way of one effect keeps it")
+        for name, effects in (("two effects that fail alike", [effect(["m9"]), effect(["m8"])]), ("two that fail differently", [effect(["m9"]), effect([])])):
+            with self.subTest(name):
+                (entry,) = checked(reduce(others=[way_of(*effects)]), price=priced_by_the_bill(box)).ways["r1"]["others"]
+                self.assertNotIn("why", entry)
+                self.assertEqual(sorted(entry), ["action", "givesUp", "inPlace", "title"], "it is kept, with no figure and no reason: the page says what it always said")
+
+    def test_a_way_whose_effects_name_no_charge_of_this_resource_gets_no_reason_from_the_price_and_so_keeps_none(self):
+        elsewhere = {**LITE, "change": {**LITE["change"], "effects": [{"handle": "r2", "meters": ["m2"], "remains": {"form": "none"}}], "action": "remove"}}
+        (entry,) = checked(reduce(others=[elsewhere]), price=priced_by_the_bill()).ways["r1"]["others"]
+        self.assertNotIn("why", entry)
+        (bare,) = checked(reduce(others=[LITE])).ways["r1"]["others"]
+        self.assertEqual(sorted(bare), ["action", "givesUp", "inPlace", "title"], "a price that says nothing (no bill was read) is no reason")
+
+    def test_a_way_whose_figure_leaves_charges_out_keeps_how_many_after_its_figures_and_a_figure_that_counts_all_of_them_keeps_none(self):
+        for skipped in (1, 2, 7):
+            with self.subTest(skipped=skipped):
+                (entry,) = checked(reduce(others=[LITE]), price=priced_skipping(skipped)).ways["r1"]["others"]
+                self.assertEqual(list(entry), ["title", "givesUp", "action", "inPlace", "lowUsd", "highUsd", "estimate", "skipped"])
+                self.assertEqual((entry["skipped"], entry["lowUsd"], entry["highUsd"]), (skipped, 20.0, 40.0))
+                self.assertEqual(proposals.others({proposals.KEY: {"others": [entry]}})[0].skipped, skipped)
+        (counted,) = checked(reduce(others=[LITE]), price=priced_skipping(0)).ways["r1"]["others"]
+        self.assertEqual(list(counted), ["title", "givesUp", "action", "inPlace", "lowUsd", "highUsd", "estimate"], "nothing was left out: the entry is what it was")
+        (alone,) = checked(reduce(others=[REMOVE]), price=priced_skipping(1, "none")).ways["r1"]["others"]
+        self.assertEqual(list(alone), ["title", "givesUp", "action", "inPlace", "lowUsd", "highUsd", "skipped"])
+        self.assertNotIn("why", alone, "a way that has a figure has no reason for having none")
+
+    def test_the_real_pricing_counts_the_charge_that_a_way_could_not_price_when_the_other_charge_was_priced(self):
+        two = {**LITE, "change": {**LITE["change"], "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "assumed", "low": 0.3, "high": 0.5}},
+                                                                 {"handle": "r1", "meters": ["m9"], "remains": {"form": "assumed", "low": 0.3, "high": 0.5}}]}}
+        (entry,) = checked(reduce(others=[two]), price=priced_by_the_bill()).ways["r1"]["others"]
+        self.assertEqual((entry["skipped"], "why" in entry, "lowUsd" in entry), (1, False, True), "one charge was priced and one was not: a figure of what could be, and how many were left out")
+
+    def test_the_real_pricing_counts_the_charge_that_a_way_could_not_price_when_the_other_charge_was_priced(self):
+        two = {**LITE, "change": {**LITE["change"], "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "assumed", "low": 0.3, "high": 0.5}},
+                                                                 {"handle": "r1", "meters": ["m9"], "remains": {"form": "assumed", "low": 0.3, "high": 0.5}}]}}
+        (entry,) = checked(reduce(others=[two]), price=priced_by_the_bill()).ways["r1"]["others"]
+        self.assertEqual((entry["skipped"], "why" in entry, "lowUsd" in entry), (1, False, True), "one charge was priced and one was not: a figure of what could be, and how many were left out")
+
+    def test_skipped_counts_things_that_the_ai_named_so_an_effect_that_fails_counts_as_one_whatever_charges_it_names_and_the_words_say_things(self):
+        box = invented(1)
+        box.meters["m2"], box.meters["m3"] = (meter_line("r1", 50.0, words=(*METER_WORDS[:2], name, *METER_WORDS[3:])) for name in ("Second Hours", "Third Hours"))
+        counted = {"handle": "r1", "meters": ["m1"], "remains": {"form": "assumed", "low": 0.3, "high": 0.5}}
+        two_under_one_price = {"handle": "r1", "meters": ["m2", "m3"], "remains": {"form": "alternative", "price": "p1"}}
+        named_again = {"handle": "r1", "meters": ["m1"], "remains": {"form": "assumed", "low": 0.2, "high": 0.4}}
+        for name, effects in (("two charges under one price that cannot be priced: two charges are not counted and the count is one", [counted, two_under_one_price]),
+                              ("a bill line named in a second effect: it is counted once, and the second effect adds nothing", [counted, named_again])):
+            with self.subTest(name):
+                (entry,) = checked(reduce(others=[{**LITE, "change": {**LITE["change"], "effects": effects}}]), price=priced_by_the_bill(box)).ways["r1"]["others"]
+                self.assertEqual((entry["skipped"], "lowUsd" in entry, "why" in entry), (1, True, False))
+                self.assertEqual(proposals.left_out(entry["skipped"]), "One thing that the AI named is not counted in this figure.", "true of an effect that names two charges, and of a charge that was named twice")
+
+    def test_the_skeptic_is_shown_neither_the_reason_nor_the_count_because_its_instruction_does_not_describe_them(self):
+        stored = {proposals.KEY: {"others": [{"title": "Use the Large tier", "givesUp": "", "action": "switch", "why": "alternative"},
+                                             {"title": "Use the Small tier", "givesUp": "", "action": "switch", "lowUsd": 10.0, "highUsd": 20.0, "estimate": True, "skipped": 2}]}}
+        seen = proposals.view([("r1", stored)])
+        self.assertEqual([sorted(way) for way in seen["others"]], [["action", "givesUp", "title"], ["action", "estimate", "givesUp", "highUsd", "lowUsd", "title"]])
+        for text in (agents.SKEPTIC_INSTRUCTIONS, agents.INVESTIGATOR_INSTRUCTIONS):
+            for word in ('"why"', '"skipped"', "NOT_PRICED"):
+                self.assertNotIn(word, text)
+
+    def test_what_the_skeptic_is_given_of_a_whole_investigation_holds_neither_key(self):
+        h = run(asked(reduce(others=[via("Use the Lite tier", "m9", "p1"), via("Use the Small tier", "m1", "p1")])), with_list(invented(1)))
+        (kept, small) = ways_of(h)["others"]
+        self.assertEqual(kept["why"], "lines", "the case keeps the reason")
+        (one,) = json.loads(h.foundry.inputs()[1])["findings"]
+        self.assertEqual([sorted(way) for way in one["others"]], [["action", "givesUp", "inPlace", "title"], ["action", "givesUp", "highUsd", "inPlace", "lowUsd", "title"]])
+        self.assertNotIn("why", json.dumps(one["others"]))
+        self.assertNotIn("skipped", json.dumps(one["others"]))
+
+
+class WhatEachWordOfTheReasonsStandsFor(unittest.TestCase):
+    """The pricing keeps ONE word for several causes, so the sentence of each word (proposals.NOT_PRICED) has to be true of every cause that gives it. These are the causes, found by reading cases/pricing.py
+    (the lines are in proposal 31), each priced for real from invented lines: when the pricing gives one of them another word, or a new cause gives a word that its sentence does not fit, a test here fails and
+    the sentence has to be read again."""
+
+    def way(self, effects, action="switch", lines=None, retail=0.30, meters=None, blocked=None, limits=None):
+        box = invented(1)
+        box.prices, box.retail, box.offers = {**LIST, **(lines or {})}, ({"m1": retail} if retail is not None else {}), {"m1": {*LIST, *(lines or {})}}
+        box.meters.update(meters or {})
+        if limits:
+            box.evidence["r1"]["limits"] = limits
+        return pricing.price(pricing.parse({"action": action, "effects": effects, "how": "Make it again."}), ["r1"], box, COSTS, blocked, meter_word)
+
+    @staticmethod
+    def on(remains, meters=("m1",)):
+        return [{"handle": "r1", "meters": list(meters), "remains": remains}]
+
+    def test_every_cause_that_the_sentences_were_written_for_gives_the_word_that_has_them(self):
+        other = lambda name, usd, **more: meter_line("r1", usd, words=(*METER_WORDS[:2], name, *METER_WORDS[3:]), **more)
+        price = lambda handle: {"form": "alternative", "price": handle}
+        line = lambda unit="1 Hour", usd=0.05, service="Example Compute", sku="Small", meter="Light Hours", tiers=1: Listed(service, "Basic Tier", sku, meter, unit, usd, "swedencentral", tiers)
+        assumed = {"form": "assumed", "low": 0.3, "high": 0.5}
+        full = meter_line("r1", 200.0)
+        refunded = full._replace(usd=-55.0, daily={full.start + dt.timedelta(days=n): (-200.0 if n == 0 else 5.0) for n in range(30)})  # a refund on the first day: the cost nets to less than nothing, the last week costs
+        causes = (
+            ("alternative", "the AI named no price", {"effects": self.on({"form": "alternative"})}),
+            ("alternative", "the price that it named is one that no tool showed", {"effects": self.on(price("p99"))}),
+            ("alternative", "a price of nothing", {"effects": self.on(price("p3")), "lines": {"p3": line(usd=0.0)}}),
+            ("alternative", "a price that changes with the quantity", {"effects": self.on(price("p3")), "lines": {"p3": line(tiers=2)}}),
+            ("alternative", "a price of another service", {"effects": self.on(price("p3")), "lines": {"p3": line(service="Another Service")}}),
+            ("alternative", "a cheaper price that has no plain name", {"effects": self.on(price("p3")), "lines": {"p3": line(sku="Small-One", meter="Light-Hours")}}),
+            ("units", "a price in another unit", {"effects": self.on(price("p3")), "lines": {"p3": line(unit="1 GB")}}),
+            ("listed", "no list price for the charge that it replaces", {"effects": self.on(price("p1")), "retail": None}),
+            ("listed", "a list price of nothing for the charge that it replaces", {"effects": self.on(price("p1")), "retail": 0.0}),
+            ("quantity", "a charge with no quantity", {"effects": self.on(price("p1")), "meters": {"m1": meter_line("r1", 200.0)._replace(quantity=0.0)}}),
+            ("quantity", "a quantity, and a cost that nets to nothing over the days", {"effects": self.on(price("p1")), "meters": {"m1": refunded}}),
+            ("remains", "a form that the action does not take", {"effects": self.on({"form": "ratio", "on": UNITS, "from": 4, "to": 2}), "action": "remove"}),
+            ("remains", "one price for two charges", {"effects": self.on(price("p1"), ("m1", "m2")), "meters": {"m2": other("Second Hours", 50.0)}}),
+            ("remains", "a quantity a little off the bill", {"effects": self.on({"form": "quantity", "from": 721, "to": 0}), "action": "reduce"}),
+            ("none", "no charge named", {"effects": self.on({"form": "none"}, ()), "action": "remove"}),
+            ("lines", "a charge that no tool showed", {"effects": self.on(assumed, ("m9",))}),
+            ("lines", "a charge that cost nothing and one that no tool showed", {"effects": self.on(assumed, ("m1", "m9")), "meters": {"m1": meter_line("r1", 0.0)}}),
+            ("nothing", "a charge that cost nothing", {"effects": self.on(assumed), "meters": {"m1": meter_line("r1", 0.0)}}),
+            ("nothing", "the AI says that everything remains", {"effects": self.on({"form": "assumed", "low": 1.0, "high": 1.0})}),
+            ("nothing", "a charge that is a credit", {"effects": self.on(assumed, ("m2",)), "meters": {"m2": other("Credit Hours", -50.0)}}),
+            ("credit", "a credit on the resource that is as large as its charges", {"effects": self.on(assumed), "meters": {"m2": other("Credit Hours", -400.0)}}),
+            ("range", "a number below the documented range", {"effects": self.on({"form": "ratio", "on": UNITS, "from": 4, "to": 1}), "action": "reduce", "limits": LIMITS}),
+            ("currency", "a cost that is not in US dollars", {"effects": self.on(assumed), "blocked": {"r1": "currency"}}),
+        )
+        for key, cause, made in causes:
+            with self.subTest(key=key, cause=cause):
+                priced = self.way(**made)
+                self.assertEqual((priced.why.get("r1"), "r1" in priced.rows), (key, False))
+        self.assertEqual({key for key, _, _ in causes}, set(proposals.NOT_PRICED), "every word that a kept way can have is shown with its causes")
+        for key, cause, made in causes:
+            with self.subTest(kept=key, cause=cause):
+                (entry,) = checked(reduce(others=[{**LITE, "change": {"action": made.get("action", "switch"), "effects": made["effects"], "how": "Make it again."}}]),
+                                   price=lambda option, made=made: self.way(**made)).ways["r1"]["others"]
+                self.assertEqual(entry["why"], key, "a way with that cause is kept with its word")
 
 
 class WhatTheCaseKeepsAndTheNotesSay(unittest.TestCase):

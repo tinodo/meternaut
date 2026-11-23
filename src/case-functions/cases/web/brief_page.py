@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, IN_PLACE, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, group_things, not_now_reason, plan_headline, taken_back, text_of, times_text, waited_text, why_a_person, ways_sentences, Brief
+from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, IN_PLACE, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, group_things, not_now_reason, plan_headline, taken_back, text_of, times_text, waited_text, way_note, why_a_person, ways_sentences, Brief
 from ..models import ADVISE, GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, off_notice, read
@@ -208,16 +208,18 @@ def _others(brief: Brief) -> Safe:
                  paragraph(note, "m")])
 
 
-def _saves(other) -> str:
+def _saves(other) -> object:
     """What another way (an `Other` of the brief) saves a month, as the page says other figures: a range, one amount, or that nothing priced it. A way whose saving rests on a share that the AI
-    assumed says so in the cell."""
+    assumed says so in the cell. Under the figure, a line of its own says what is missing from it when code knows: why a way has no figure, or how many of the things that the AI named the figure does
+    not count (brief.way_note). A way that was kept before code kept these says what it said."""
     if other.low is None:
-        return "Not priced"
-    ranged = other.high is not None and other.high > other.low
-    figure = f"{dollars(other.low)} to {dollars(other.high)}" if ranged else dollars(other.low)
-    if other.estimate:
-        return f"about {figure}, the AI's estimate"
-    return figure if ranged else f"about {figure}"
+        figure = "Not priced"
+    else:
+        ranged = other.high is not None and other.high > other.low
+        figure = f"{dollars(other.low)} to {dollars(other.high)}" if ranged else dollars(other.low)
+        figure = f"about {figure}, the AI's estimate" if other.estimate else figure if ranged else f"about {figure}"
+    note = way_note(other)
+    return fmt('{figure}<br><span class="muted">{note}</span>', figure=figure, note=note) if note else figure
 
 
 def _decision(brief: Brief, case: CaseRecord | None, now: dt.datetime) -> Safe:

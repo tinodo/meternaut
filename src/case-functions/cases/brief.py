@@ -2151,6 +2151,39 @@ def others_line(brief: Brief) -> str:
     return ways_sentences(brief.others, on, False)
 
 
+def way_note(other: proposals.Other) -> str:
+    """What is missing from the figure of one way, as a whole sentence of its own (under the figure in its cell on the page): why it has no figure, or how many of the things that the AI named its figure
+    does not count. Nothing for a way whose figure counts them all, and for a way that was kept before code kept these."""
+    from . import proposals
+
+    if other.low is None:
+        return proposals.not_priced(other.why)
+    return proposals.left_out(other.skipped) if other.skipped else ""
+
+
+def ways_notes(others: Sequence[proposals.Other]) -> str:
+    """What a card and a letter, which have no table, say under the line about the ways of what the cells of the page say of each: why the ways that are not priced have no figure (when every one of them has a
+    reason that code kept: once when they share it, and that they differ when they do not, which the page says for each) and how many of the things that the AI named the figures leave out. Nothing when
+    there is nothing to say."""
+    from . import proposals
+
+    many = len(others)
+    unpriced = [other for other in others if other.low is None]
+    said: list[str] = []
+    if unpriced and all(other.why in proposals.NOT_PRICED for other in unpriced):
+        reasons = list(dict.fromkeys(other.why for other in unpriced))
+        if many == 1:
+            subject, verb = "It", "is not priced"
+        else:
+            subject = "They" if len(unpriced) == many else "The one that is not priced" if len(unpriced) == 1 else "The ones that are not priced"
+            verb = "has no figure" if len(unpriced) == 1 else "have no figure"
+        said.append(f"{subject} {verb} " + (f"because {proposals.NOT_PRICED[reasons[0]]}" if len(reasons) == 1 else "for different reasons, and the page says each") + ".")
+    left = [other for other in others if other.low is not None and other.skipped]
+    if left:
+        said.append(proposals.left_out(sum(other.skipped for other in left), ("its figure" if many == 1 else "one of the figures") if len(left) == 1 else f"{_count_word(len(left))} of the figures"))
+    return " ".join(said)
+
+
 # -- the whole -----------------------------------------------------------------------------------------------------------------------------
 
 def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: ActionRecord | None = None, decisions: Sequence[DecisionRecord] = (), *, now: dt.datetime,
