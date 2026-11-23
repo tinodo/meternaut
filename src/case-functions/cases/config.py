@@ -46,8 +46,8 @@ INVESTIGATE = "INVESTIGATE"
 INVESTIGATE_MAX_CALLS = "INVESTIGATE_MAX_CALLS"
 INVESTIGATE_MAX_SECONDS = "INVESTIGATE_MAX_SECONDS"
 # How many days the daily timer waits after an investigation before it investigates again. A Watch of eight beats uses at most about 800,000 tokens of the Investigator, which is about 1 to 3 US dollars through
-# the AI Gateway (docs/proposals/25-beats.md has the arithmetic). The standing limit of the gateway is 5 a day and 25 a month for each caller (rule 15 (g)), shared with the Study, the evaluations, the red
-# team and every run that a person starts: weekly is about 13 of the 25, daily would be about 90 and does not fit. A run that a person starts always investigates; the fixed detectors' leads are
+# the AI Gateway (docs/proposals/25-beats.md has the arithmetic). The standing limit of the gateway is 10 a day and 40 a month for each caller (rule 15 (g); 5 and 25 until 2026-11-23), shared with the Study, the evaluations, the red
+# team and every run that a person starts: weekly is about 13 of the 40, daily would be about 90 and does not fit. A run that a person starts always investigates; the fixed detectors' leads are
 # judged by the Detective and the Skeptic every day anyway (cents).
 INVESTIGATE_EVERY_DAYS = "INVESTIGATE_EVERY_DAYS"
 DEFAULT_INVESTIGATE_EVERY_DAYS = 7
@@ -58,7 +58,7 @@ INVESTIGATE_MAX_TOKENS = "INVESTIGATE_MAX_TOKENS"
 # The investigation looks at the estate in beats (cases/beats.py, docs/proposals/25-beats.md): at most INVESTIGATE_BEATS short sessions of the Investigator, each with its own calls, seconds and tokens,
 # inside the seconds and the tokens of the whole investigation. A session of 22 tool calls used about 345,000 tokens, and a model reads the conversation again at every step, so many short sessions
 # that start from what code has read cost far less than one long one. The tokens of a beat are soft: after them its tool calls are refused and it writes its answer; the harness stops it at twice that.
-# The standing limit of the AI Gateway for each caller is 50,000 tokens a minute, 5 US dollars a day and 25 a month (rule 15 (g)), and the Watch has to end inside what the Hub waits for.
+# The standing limit of the AI Gateway for each caller is 50,000 tokens a minute, 10 US dollars a day and 40 a month (rule 15 (g)), and the Watch has to end inside what the Hub waits for.
 INVESTIGATE_BEATS = "INVESTIGATE_BEATS"
 INVESTIGATE_BEAT_CALLS = "INVESTIGATE_BEAT_CALLS"
 INVESTIGATE_BEAT_SECONDS = "INVESTIGATE_BEAT_SECONDS"

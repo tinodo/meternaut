@@ -32,6 +32,8 @@ CASES_PRINCIPAL = "eeeeeeee-0000-0000-0000-000000000005"
 SECRET = "THE-VALUE-OF-A-KEY-THAT-NOTHING-MAY-PRINT"
 MODELS = json.loads((ROOT / "environment" / "models.json").read_text(encoding="utf-8"))
 POLICIES = json.loads((ROOT / "environment" / "aigateway" / "policies.json").read_text(encoding="utf-8"))
+# The tests of this module hold the tool, not the owner's limit: the two amounts are those of the file (test_environment_params holds them to rule 15 (g) of AGENTS.md), so that the next change of the limit moves no test here.
+DAY_USD, MONTH_USD = POLICIES[2]["amount"], POLICIES[3]["amount"]
 NOT_FOUND = "ERROR: (ResourceNotFound) The Resource was not found."
 BASE = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}"
 GATEWAY_ID = f"{BASE}/providers/Microsoft.ApiManagement/aigateways/{GATEWAY}"
@@ -144,10 +146,10 @@ class Merge(unittest.TestCase):
         merged, changes = prep.merge(current, POLICIES)
         self.assertEqual([p["type"] for p in merged], ["tokenLimit", "costLimit", "requestRateLimit", "costLimit"])
         self.assertEqual((merged[0]["count"], merged[0]["id"], merged[0]["spent"]), (50000, "kept", 7), "updated in place: the id and the other fields stay")
-        self.assertEqual((merged[1]["amount"], merged[1]["counted"]), (5, 3.5), "a cost limit keeps what it has counted")
+        self.assertEqual((merged[1]["amount"], merged[1]["counted"]), (DAY_USD, 3.5), "a cost limit keeps what it has counted")
         self.assertEqual(merged[2]["callsPerPeriod"], 60)
         self.assertEqual(merged[3]["id"], "meternaut-month")
-        self.assertEqual(changes, ["updates tokenLimit (count 1000 to 50000)", "adds requestRateLimit", "updates costLimit meternaut-day (amount 20 to 5)", "adds costLimit meternaut-month"])
+        self.assertEqual(changes, ["updates tokenLimit (count 1000 to 50000)", "adds requestRateLimit", f"updates costLimit meternaut-day (amount 20 to {DAY_USD})", "adds costLimit meternaut-month"])
 
     def test_a_cost_limit_is_found_by_its_id_and_a_policy_of_another_type_is_left_as_it_is(self):
         current = [{"type": "costLimit", "id": "default", "amount": 1, "period": "day", "counterKey": ["identity"], "scope": "workspace"},
@@ -159,8 +161,8 @@ class Merge(unittest.TestCase):
 
     def test_numbers_are_compared_as_numbers_so_that_a_policy_that_is_there_is_not_written_again(self):
         current = copy.deepcopy(POLICIES)
-        current[2]["amount"] = 5.0
-        current[3]["amount"] = 25.0
+        current[2]["amount"] = float(DAY_USD)
+        current[3]["amount"] = float(MONTH_USD)
         current[0]["scope"] = "workspace"
         extra = {**current[0], "extra": "kept"}
         merged, changes = prep.merge([extra, *current[1:]], POLICIES)
@@ -173,7 +175,7 @@ class Merge(unittest.TestCase):
     def test_the_lines_that_describe_a_policy_hold_names_and_numbers_only(self):
         for policy, expected in ((POLICIES[0], "tokenLimit: 50000 tokens a minute for each caller (workspace)"),
                                  (POLICIES[1], "requestRateLimit: 60 calls in 60 seconds for each caller (workspace)"),
-                                 (POLICIES[2], "costLimit meternaut-day: 5 US dollars a day for each caller (workspace)"),
+                                 (POLICIES[2], f"costLimit meternaut-day: {DAY_USD} US dollars a day for each caller (workspace)"),
                                  ({"type": "ipFilter", "cidrRanges": ["203.0.113.0/24"]}, "ipFilter: a policy of this type is there (not managed here)"),
                                  ({"type": "tokenLimit", "count": "SECRET", "period": "mi nute!", "scope": "work space"}, "tokenLimit: ? tokens a mi?nute? for each caller (work?space)")):
             self.assertEqual(prep.describe_policy(policy), expected)
@@ -234,7 +236,7 @@ class Policies(unittest.TestCase):
         self.assertEqual(azure.writes(), [patches[0]], "no other write: no key, no model, no role")
         for line in ("note: The merge adds tokenLimit", "note: The merge adds costLimit meternaut-month", "ok: The merged policies were written to the workspace (one PATCH)",
                      "ok: Read back: tokenLimit: 50000 tokens a minute for each caller (workspace)", "ok: Read back: requestRateLimit: 60 calls in 60 seconds for each caller (workspace)",
-                     "ok: Read back: costLimit meternaut-day: 5 US dollars a day for each caller (workspace)", "ok: Read back: costLimit meternaut-month: 25 US dollars a month for each caller (workspace)"):
+                     f"ok: Read back: costLimit meternaut-day: {DAY_USD} US dollars a day for each caller (workspace)", f"ok: Read back: costLimit meternaut-month: {MONTH_USD} US dollars a month for each caller (workspace)"):
             self.assertIn(line, out)
         self.assertEqual(azure.calls[0][1], GATEWAY_ID, "the gateway is read first")
         self.assertEqual(azure.calls[1][1], WORKSPACE)
@@ -255,9 +257,9 @@ class Policies(unittest.TestCase):
         self.assertEqual((code, err), (0, ""), out)
         body = [call for call in azure.calls if call[0] == "patch"][0][3]["properties"]["policies"]
         self.assertEqual(body[:2], current[:2], "the filter and the other cost limit are untouched")
-        self.assertEqual((body[2]["amount"], body[2]["counted"]), (5, 4.25))
+        self.assertEqual((body[2]["amount"], body[2]["counted"]), (DAY_USD, 4.25))
         self.assertEqual([p["type"] for p in body], ["ipFilter", "costLimit", "costLimit", "tokenLimit", "requestRateLimit", "costLimit"])
-        self.assertIn("note: The merge updates costLimit meternaut-day (amount 20 to 5)", out)
+        self.assertIn(f"note: The merge updates costLimit meternaut-day (amount 20 to {DAY_USD})", out)
 
     def test_a_refusal_of_the_service_is_said_with_its_first_line_and_with_what_to_do_and_nothing_else_is_written(self):
         azure = Azure(world(policies=[]))
@@ -344,7 +346,7 @@ class Policies(unittest.TestCase):
         self.assertEqual(code, 0)
         text = summary.read_text(encoding="utf-8")
         self.assertIn("### The gateway-wide policies of the AI Gateway", text)
-        self.assertIn("ok: Read back: costLimit meternaut-month: 25 US dollars a month", text)
+        self.assertIn(f"ok: Read back: costLimit meternaut-month: {MONTH_USD} US dollars a month", text)
         for content in ("[", "{}", "[]", json.dumps([{"type": "ipFilter", "action": "Allow"}])):
             policy_file(self.directory.name).write_text(content, encoding="utf-8")
             azure = Azure()
@@ -513,7 +515,7 @@ class ReadBack(unittest.TestCase):
                      "ok: The model gpt-6-1-sol: deployment gpt-6.1-sol version 2026-09-29, content safety Medium for the four categories",
                      "ok: The alias gpt-6-luna points to the model gpt-6-luna, and to nothing else", "ok: The alias gpt-6.1-sol points to the model gpt-6-1-sol, and to nothing else",
                      "ok: The policy tokenLimit: 50000 tokens a minute for each caller (workspace)", "ok: The policy requestRateLimit: 60 calls in 60 seconds for each caller (workspace)",
-                     "ok: The policy costLimit meternaut-day: 5 US dollars a day for each caller (workspace)", "ok: The policy costLimit meternaut-month: 25 US dollars a month for each caller (workspace)",
+                     f"ok: The policy costLimit meternaut-day: {DAY_USD} US dollars a day for each caller (workspace)", f"ok: The policy costLimit meternaut-month: {MONTH_USD} US dollars a month for each caller (workspace)",
                      "ok: The Operator's identity holds AI Gateway Models User on the gateway", "note: No principal of the Foundry project was given",
                      f"ok: The gateway's identity holds Foundry User on the Foundry resource {ACCOUNT}",
                      "note: The API keys of the gateway, by name: master. The service makes the built-in key master; it is unused"):
