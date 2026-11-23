@@ -259,10 +259,10 @@ AIGATEWAY_TOKEN_PERIODS = {"minute": 1, "hour": 60, "day": 1440}
 AIGATEWAY_COST_PERIODS = ("hour", "day", "week", "month", "year")
 # The id pattern of the portal's cost limit form: letters, digits, underscore and hyphen, and no hyphen at either end.
 AIGATEWAY_COST_ID = re.compile(r"^(?!-)(?!.*-$)[A-Za-z0-9_-]{1,64}$")
-# The owner's standing limit, AGENTS.md rule 15 (g): at most 25 EUR of model calls in total and 5 EUR a day. A cost limit of the gateway is in US dollars, so its amount is held to the same
+# The owner's standing limit, AGENTS.md rule 15 (g): at most 40 EUR of model calls in total and 10 EUR a day (25 and 5 until 2026-11-23). A cost limit of the gateway is in US dollars, so its amount is held to the same
 # numbers: while a euro is worth more than a dollar (an assumption, not checked against a rate), an amount in dollars that is at most the figure in euros is under the limit. A test holds
 # these numbers to the rule's text. An hour or a day may not be above the daily figure, a longer period not above the total.
-AIGATEWAY_COST_CEILING_USD = {"hour": 5, "day": 5, "week": 25, "month": 25, "year": 25}
+AIGATEWAY_COST_CEILING_USD = {"hour": 10, "day": 10, "week": 40, "month": 40, "year": 40}
 
 # The AI security (docs/proposals/10-ai-security-and-governance.md). Each constant is a switch or a setting that one line changes, in a change of its own.
 # Whether the Application Insights component has its OpenTelemetry ingestion on. The AI Gateway's telemetry exporter (environment/aigateway/telemetry.bicep, made by the action gateway-telemetry) sends to the

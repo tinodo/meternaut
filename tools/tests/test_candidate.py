@@ -836,7 +836,7 @@ class TheRecordOfTheCandidates(unittest.TestCase):
         for words in ("passes a run when the replay prints no `miss:` line for it", "The busy database passes when its answer has no deletion and no lowered setting", "a way is not judged by code",
                       "at least twice with the candidate and at least twice with production", "(i) for each row the candidate passes in at least as many of its runs as production does in its own",
                       "(ii) for at least one row it passes in more", "(iii) the older rows still pass once with the candidate", "reading a held-out result and then editing the candidate is changing it because of that result",
-                      "About 0.45 US dollar a row", "so it takes three days", "so a replay for a release names its rows with `evals_only`"):
+                      "About 0.45 US dollar a row", "the seven starts are about 9.9", "so a replay for a release names its rows with `evals_only`"):
             self.assertIn(words, item)
         for words in ("one run each", "no worse on them than production", "better on at least one", "expects no proposal"):
             self.assertNotIn(words, item, "the rule that nobody could apply, which the review of 2026-11-22 found: no run count, no meaning of worse and better")

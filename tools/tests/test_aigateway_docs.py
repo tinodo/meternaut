@@ -85,10 +85,10 @@ class TheDecisionRecord(unittest.TestCase):
             by_type.setdefault(policy["type"], []).append(policy)
         (token,), (rate,) = by_type["tokenLimit"], by_type["requestRateLimit"]
         costs = {cost["period"]: cost["amount"] for cost in by_type["costLimit"]}
-        self.assertEqual((token["count"], token["period"], rate["callsPerPeriod"], rate["periodSeconds"], costs), (50000, "minute", 60, 60, {"day": 5, "month": 25}))
+        self.assertEqual((token["count"], token["period"], rate["callsPerPeriod"], rate["periodSeconds"], costs), (50000, "minute", 60, 60, {"day": 10, "month": 40}))
         self.assertIn("50,000 tokens a minute", PROPOSAL)
         self.assertIn("60 requests a minute", PROPOSAL)
-        self.assertIn("5 US dollars a day and 25 US dollars a month", PROPOSAL)
+        self.assertIn("10 US dollars a day and 40 US dollars a month", PROPOSAL)
         self.assertIn("Each limit counts for every caller identity alone.", PROPOSAL)
 
     def test_the_sources_that_it_relies_on_are_named(self):
