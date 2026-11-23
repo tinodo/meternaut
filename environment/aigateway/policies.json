@@ -16,7 +16,7 @@
   {
     "type": "costLimit",
     "id": "meternaut-day",
-    "amount": 5,
+    "amount": 10,
     "period": "day",
     "counterKey": ["identity"],
     "scope": "workspace"
@@ -24,7 +24,7 @@
   {
     "type": "costLimit",
     "id": "meternaut-month",
-    "amount": 25,
+    "amount": 40,
     "period": "month",
     "counterKey": ["identity"],
     "scope": "workspace"

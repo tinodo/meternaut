@@ -1112,7 +1112,7 @@ class AiGateway(unittest.TestCase):
         (token,) = by_kind["tokenLimit"]
         agent_rates = [m["agentCapacity"] * 1000 for m in json.loads(MODELS.read_text(encoding="utf-8"))]
         self.assertEqual((token["period"], token["count"]), ("minute", max(agent_rates)), "a minute's tokens of the deployment that the Investigator uses, the largest of the agents'")
-        self.assertEqual({(c["period"], c["amount"]) for c in by_kind["costLimit"]}, {("day", 5), ("month", 25)}, "the owner's standing limit: 5 a day and 25 in total")
+        self.assertEqual({(c["period"], c["amount"]) for c in by_kind["costLimit"]}, {("day", 10), ("month", 40)}, "the owner's standing limit: 10 a day and 40 in total")
         self.assertEqual(len({c["id"] for c in by_kind["costLimit"]}), 2, "each cost limit keeps its own stable id")
 
     def test_the_numbers_of_the_standing_limit_in_the_builder_are_the_ones_of_agents_md(self):
@@ -1147,8 +1147,8 @@ class AiGateway(unittest.TestCase):
             "a token count that is a switch": (changed(0, count=True), "count of the token limit"),
             "a rate of nothing": (changed(1, callsPerPeriod=0), "request rate limit is callsPerPeriod from 1 to 1000"),
             "a rate window of a day": (changed(1, periodSeconds=86400), "request rate limit is callsPerPeriod from 1 to 1000"),
-            "a daily cost above the daily limit": (changed(2, amount=5.01), "cost limit for a day is a number above 0 and at most 5"),
-            "a monthly cost above the total": (changed(3, amount=26), "cost limit for a month is a number above 0 and at most 25"),
+            "a daily cost above the daily limit": (changed(2, amount=10.01), "cost limit for a day is a number above 0 and at most 10"),
+            "a monthly cost above the total": (changed(3, amount=41), "cost limit for a month is a number above 0 and at most 40"),
             "a cost of nothing": (changed(3, amount=0), "above 0"),
             "a cost that is a text": (changed(3, amount="25"), "above 0"),
             "a cost that is a switch": (changed(3, amount=True), "above 0"),

@@ -1,7 +1,7 @@
 """How often the investigation runs: the daily timer investigates when INVESTIGATE_EVERY_DAYS have passed since the last run that investigated; a run that a person starts always does.
 
-A run of the investigation costs about half a US dollar of model calls (Cost Management, 2026-11-08), and the standing limit of the AI Gateway is 5 a day and 25 a month for each caller (AGENTS.md
-rule 15 (g)), shared with the evaluations, the red team and the runs that a person starts: a weekly investigation uses about 2 of the 25, a daily one about 15. The leads of the fixed detectors are
+A run of the investigation costs about half a US dollar of model calls (Cost Management, 2026-11-08), and the standing limit of the AI Gateway is 10 a day and 40 a month for each caller (AGENTS.md
+rule 15 (g); 5 and 25 until 2026-11-23), shared with the evaluations, the red team and the runs that a person starts: a weekly investigation uses about 2 of the 40, a daily one about 15. The leads of the fixed detectors are
 judged by the Detective and the Skeptic every day, which costs cents. Everything in these tests is invented.
 """
 import datetime as dt
