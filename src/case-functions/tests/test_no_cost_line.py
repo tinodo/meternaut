@@ -26,15 +26,16 @@ ZERO = re.compile(r"\$\s?0(?:\.0+)?(?![\d.,])")  # "$0", "$0.00" and "$ 0": a ze
 VM = f"{RG}/rg-app/providers/microsoft.compute/virtualmachines/some-vm"
 
 
-def an_idle_disk(name: str = "idle-disk-4gb") -> dict:
-    """An unattached 4 GB Standard HDD that nobody planted, in the group where Meternaut may make a change but without the tag of planted waste: it is a matter for advice."""
+def an_idle_disk(name: str = "planted-disk-4gb") -> dict:
+    """An unattached 4 GB Standard HDD in the group where Meternaut may make a change, named as its planting names its waste but without the tag of planted waste: it is a matter for advice. (A disk with
+    another name there would be a part of Meternaut itself, and nobody is asked about that.)"""
     return disk_row(name, "rg-meternaut", skuName="Standard_LRS", sizeGb=4, timeCreated="2026-10-01T10:00:00.0000000+00:00")
 
 
 def an_estate(disks=1) -> FakeEstate:
     """An estate whose Cost Management has a line for another resource and none for the disks: the subscription has a bill, and the disks are not in it (as the owner saw)."""
     estate = FakeEstate()
-    estate.graph["orphan-managed-disk"] = [an_idle_disk(f"idle-disk-{n}") for n in range(disks)]
+    estate.graph["orphan-managed-disk"] = [an_idle_disk(f"planted-disk-{n}") for n in range(disks)]
     estate.cost_rows = [(12.5, VM)]
     return estate
 
@@ -79,7 +80,7 @@ class TheDiskThatAzureHasNoLineFor(unittest.TestCase):
         queries = [c["body"] for c in self.estate.calls if "costmanagement" in c["path"].lower()]
         self.assertEqual(sorted(q["dataset"]["granularity"] for q in queries), ["Daily", "None"])
         daily = next(q for q in queries if q["dataset"]["granularity"] == "Daily")
-        self.assertEqual(daily["dataset"]["filter"]["dimensions"]["values"], [an_idle_disk("idle-disk-0")["id"].lower()])
+        self.assertEqual(daily["dataset"]["filter"]["dimensions"]["values"], [an_idle_disk("planted-disk-0")["id"].lower()])
 
     def test_the_brief_says_that_azure_has_no_line_and_keeps_the_estimate_apart_from_every_cost_and_saving(self):
         brief = self.brief
@@ -163,8 +164,8 @@ class WhenAFindingHasLinesTheEstimateIsNotThere(unittest.TestCase):
         clock = Moving()
         extras = loop_for(clock)
         estate = an_estate()
-        estate.cost_rows.append((1.25, an_idle_disk("idle-disk-0")["id"].lower()))
-        estate.days = [(dt.date(2026, 11, 3), an_idle_disk("idle-disk-0")["id"], 0.5), (dt.date(2026, 11, 2), an_idle_disk("idle-disk-0")["id"], 0.75)]
+        estate.cost_rows.append((1.25, an_idle_disk("planted-disk-0")["id"].lower()))
+        estate.days = [(dt.date(2026, 11, 3), an_idle_disk("planted-disk-0")["id"], 0.5), (dt.date(2026, 11, 2), an_idle_disk("planted-disk-0")["id"], 0.75)]
         watch(estate, extras, clock)
         (case,) = extras.store.cases_recent()
         self.assertEqual((case.cost_state, case.cost_usd_30d, case.estimate), ("lines", 1.25, {}))
@@ -234,7 +235,7 @@ class WhenCostManagementKeepsSayingTooManyRequests(unittest.TestCase):
     def test_the_next_watch_reads_again_and_the_case_gets_its_figure_when_azure_answers(self):
         self.clock.advance(hours=3)
         estate = an_estate()
-        estate.cost_rows.append((3.5, an_idle_disk("idle-disk-0")["id"].lower()))
+        estate.cost_rows.append((3.5, an_idle_disk("planted-disk-0")["id"].lower()))
         watch(estate, self.extras, self.clock)
         (case,) = self.extras.store.cases_recent()
         self.assertEqual((case.cost_state, case.cost_usd_30d, case.estimate), ("lines", 3.5, {}))
@@ -243,7 +244,7 @@ class WhenCostManagementKeepsSayingTooManyRequests(unittest.TestCase):
         clock = Moving()
         extras = loop_for(clock)
         estate = an_estate()
-        estate.cost_rows.append((3.5, an_idle_disk("idle-disk-0")["id"].lower()))
+        estate.cost_rows.append((3.5, an_idle_disk("planted-disk-0")["id"].lower()))
         watch(estate, extras, clock)
         clock.advance(days=1)
         failing = an_estate()

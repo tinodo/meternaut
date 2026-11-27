@@ -423,7 +423,7 @@ class TheOlderDetectorsAreHeldByTheSameRules(unittest.TestCase):
         self.assertEqual(held["reason"], "held back: not checked who changed it")
         self.assertIn("1 finding held back: not checked who changed it", [e["note"] for e in events if e["type"] == "run.note"])
 
-    def test_the_same_lead_in_the_group_of_meternaut_s_own_is_not_held(self):
+    def test_the_same_lead_in_the_group_of_meternaut_s_own_is_left_alone_by_every_judge_and_asks_nobody(self):
         from test_run_loop import GROUP as OWN_GROUP, estate_with
 
         clock = Moving()
@@ -432,7 +432,7 @@ class TheOlderDetectorsAreHeldByTheSameRules(unittest.TestCase):
         from support import pe_row
         estate.graph["orphan-private-endpoint"] = [pe_row("pe-own", OWN_GROUP)]
         summary, _, _ = run_watch(estate, extras, clock)
-        self.assertEqual((summary.held, len(extras.store.plans_open())), (0, 1))
+        self.assertEqual((summary.cases, summary.held, extras.store.cases_recent(), extras.store.plans_open(), extras.store.plans_held()), (0, 0, [], [], []), "a private endpoint of the group that the app is deployed in is a part of Meternaut")
 
 
 class TheHomePageSaysWhyAFindingIsHeldBack(unittest.TestCase):

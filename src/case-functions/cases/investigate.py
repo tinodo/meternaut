@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Callable, Mapping
 from . import activity, agents, beats, capability, decide, guards, impact, learning, pricing, proposals, ranges, roles, upkeep, wiring
 from . import costs as cost_words
 from . import estimate as estimates
-from .approvals import is_fixture
+from .approvals import is_fixture, is_own_part
 from .arm import scopes_of
 from .brief import MEASURED_DAYS, HELD_SHARED, HELD_UNPROVEN, IMPACT_VERDICTS, NOT_ASKED, about_use, says_nothing, shared, why_not_ask
 from .detectors import Context, Lead
@@ -547,8 +547,9 @@ def _guards_of(s: "Services", lead: Lead, context: Context | None, locks: dict[s
             scope_locks = None
             break
         scope_locks += locks[key]  # type: ignore[operator]
-    fixture = s.extras is not None and is_fixture(lead, wiring.approval_settings(s.extras.settings))
-    return guards.evaluate(lead, context if context is not None else Context(), scope_locks, fixture=fixture)
+    approval = wiring.approval_settings(s.extras.settings) if s.extras is not None else None
+    fixture = approval is not None and is_fixture(lead, approval)
+    return guards.evaluate(lead, context if context is not None else Context(), scope_locks, fixture=fixture, own=approval is not None and is_own_part(lead, approval))
 
 
 def _signature(facts: Mapping) -> tuple:

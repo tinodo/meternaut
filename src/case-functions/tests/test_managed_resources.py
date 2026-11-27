@@ -84,7 +84,7 @@ class AFindingThatAnAutomationManagesIsAsked(Base):
     def test_the_warning_is_kept_for_what_is_asked_and_never_for_what_meternaut_planted(self):
         group = "meternaut-test-rg"
         approvals = Approvals(self.store, ApprovalSettings(change_scopes=(ChangeScope(SUB, group),)), lambda: self.now)
-        planted = automation(resource_group=group, case_id="k-planted", resource_id=f"{BASE}/Microsoft.Foo/bars/planted")
+        planted = automation(resource_group=group, case_id="k-planted", resource_id=f"{BASE}/Microsoft.Compute/virtualMachines/planted-vm-1", resource_name="planted-vm-1")
         self.store.case_put(planted)
         plan = approvals.advise(planted, (TINO,))
         self.assertEqual((plan.state, AUTOMATED in plan.preconditions), ("open", False))
@@ -164,17 +164,22 @@ class NoChangePlanIsMadeForAManagedResource(unittest.TestCase):
         return ApprovalSettings(change_scopes=scopes)
 
     def test_every_path_makes_advice_and_never_a_plan_of_a_change(self):
-        for settings, label in ((self.settings(), "no group where a change may be made"), (self.settings(ChangeScope(SUB, "rg-planted-elsewhere")), "another group"),
-                                (self.settings(ChangeScope(SUB, "team-apps-rg")), "its own group, but nothing that Meternaut planted")):
+        for settings, label, name, asked in ((self.settings(), "no group where a change may be made", "oversized-vm-1", True),
+                                             (self.settings(ChangeScope(SUB, "rg-planted-elsewhere")), "another group", "oversized-vm-1", True),
+                                             (self.settings(ChangeScope(SUB, "team-apps-rg")), "its own group, named as the planting names its waste but without the tag", "planted-vm-1", True),
+                                             (self.settings(ChangeScope(SUB, "team-apps-rg")), "its own group, and a part of Meternaut itself", "oversized-vm-1", False)):
             for detector in ("investigation", "advisor-cost", "orphan-managed-disk", "idle-vm", "unused-public-ip"):
                 for recommendation in ("delete", "change", "investigate"):
                     with self.subTest(scope=label, detector=detector, recommendation=recommendation):
                         store = MemoryStore(lambda: NOW)
                         approvals = Approvals(store, settings, lambda: NOW)
-                        case = automation(detector=detector, status="proposed", recommendation=recommendation, facts=MEASURED if recommendation != "investigate" else {})
+                        case = automation(detector=detector, status="proposed", recommendation=recommendation, resource_name=name, facts=MEASURED if recommendation != "investigate" else {})
                         store.case_put(case)
                         self.assertIsNone(approvals.create(case, lead_of(case, detector), (TINO,)), "no change plan")
                         plan = approvals.plan_for(case, lead_of(case, detector), (TINO,))
+                        if not asked:
+                            self.assertIsNone(plan, "nobody is asked about what Meternaut is made of, and nothing is changed")
+                            continue
                         self.assertEqual((plan.family, plan.state), (ADVISE, "open"))
                         self.assertEqual(plan.target, {})
 

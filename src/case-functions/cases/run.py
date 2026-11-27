@@ -22,7 +22,7 @@ from . import costs as cost_words
 from . import advisor, decide, detectors, escalation, evidence, guards, investigate, roles, upkeep, usage, verify, wiring
 from . import harness as harness_module
 from . import scope as scope_mod
-from .approvals import HELD_BACK, NOTHING_TO_SAY, is_fixture
+from .approvals import HELD_BACK, NOTHING_TO_SAY, is_fixture, is_own_part
 from .arm import Arm, scopes_of
 from .detectors import DETECTOR_NAMES, Context, Estate, Lead
 from .events import History, collapse
@@ -643,6 +643,10 @@ def execute(s: Services, trigger: str) -> Summary:
         """Waste that Meternaut planted itself in the one group where a change may be made: the loop is proved on it, so it still goes through the two roles."""
         return approval is not None and is_fixture(lead, approval)
 
+    def own(lead: Lead) -> bool:
+        """A part of Meternaut itself (its AI account, its app, its storage, its logs): in the same group, and not planted. No role judges it and nobody is asked about it."""
+        return approval is not None and is_own_part(lead, approval)
+
     if approval is not None:
         ranked = sorted(ranked, key=lambda lead: not planted(lead))  # stable: the waste that Meternaut planted itself goes first, it is the one kind that a change may be made on
     summary.leads = len(ranked)
@@ -682,8 +686,11 @@ def execute(s: Services, trigger: str) -> Summary:
     # What the two roles may judge: the leads of the fixed detectors, but not an Advisor recommendation (its case is made by code, below, whether or not the investigation ran) and not the lead
     # of a resource that Advisor also names, which that case holds (waste that Meternaut planted itself keeps its own case, which then holds what Advisor says).
     advised = advisor.resources(ranked)
-    judgeable = [lead for lead in ranked if lead.detector != detectors.ADVISOR and (lead.resource_id.lower() not in advised or planted(lead))]
-    if (covered := sum(1 for lead in ranked if lead.detector != detectors.ADVISOR) - len(judgeable)):
+    mine = [lead for lead in ranked if lead.detector != detectors.ADVISOR and own(lead)]
+    judgeable = [lead for lead in ranked if lead.detector != detectors.ADVISOR and not own(lead) and (lead.resource_id.lower() not in advised or planted(lead))]
+    if mine:
+        say(f"{len(mine)} lead{'s' if len(mine) != 1 else ''} about Meternaut's own parts {'were' if len(mine) != 1 else 'was'} left alone: nobody is asked about what Meternaut is made of")
+    if (covered := sum(1 for lead in ranked if lead.detector != detectors.ADVISOR) - len(mine) - len(judgeable)):
         say(f"{covered} lead{'s' if covered != 1 else ''} about a resource that Azure Advisor also names {'are' if covered != 1 else 'is'} held by Advisor's case, which says that both found it")
     candidates = judgeable
     if investigation.ran or investigation.held:

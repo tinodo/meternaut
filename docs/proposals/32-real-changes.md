@@ -22,7 +22,7 @@ The rules of asking apply to a change as to advice, by the same function (`Appro
 | --- | --- | --- |
 | `CHANGE_REQUIRES_PLANTED_TAG` (gates.py) | True: every old family changes only what Meternaut planted, with its tag, in a group of `CHANGE_SCOPES`. Untouched. | The owner, in a pull request that he reviews himself |
 | `REAL_CHANGES_ALLOWED` (gates.py) | False: no real resource can be changed. It is not a setting and no variable reaches it. A test pins it False and pins its comment. | The owner, in a pull request that he reviews himself |
-| `CHANGE_SCOPES` | The groups of Meternaut's own planted waste. The rules of asking leave a case alone there. | The template: the project's own group |
+| `CHANGE_SCOPES` | The group that the app is deployed in. What Meternaut planted there is asked about as before; everything else in it is a part of Meternaut itself, and nobody is asked about that ([proposal 29](29-held-findings.md)). | The template: the project's own group |
 | `REAL_CHANGE_SCOPES` | The groups of the owner's real resources, `<subscription id>/<resource group>` separated by commas, empty by default. A secret of the environment `hub`, because it names subscriptions (rule 18 (b)). | The owner |
 
 A group is in one list and never in both: the settings refuse it, and so does the parameter builder (it also refuses the project's own group, and a repeat). A deploy with nothing set changes nothing: the builder writes `realChangeScopes` only when the secret is set, and the template writes the app setting only then.
