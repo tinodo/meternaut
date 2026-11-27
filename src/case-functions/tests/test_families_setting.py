@@ -1848,7 +1848,9 @@ class EveryReasonThatAChangeCannotBeMadeHasItsKeyAndItsWords(unittest.TestCase):
         self.assertEqual(self_key(world.approvals.plan_for(world.case(lead), lead, (OID,))), "unreadable", "no reader here: the change cannot be checked")
         world = Real(real=(ChangeScope(SUB, GROUP),))
         lead = lead_of(world.resource, resource_group=GROUP, subscription_id=SUB)
-        self.assertEqual(self_key(world.approvals.plan_for(world.case(lead), lead, (OID,))), "outside", "a group of Meternaut's own is no place of this family")
+        case = world.case(lead)
+        self.assertEqual(world.approvals._reason(case, (OID,)), "outside", "a group of Meternaut's own is no place of this family")
+        self.assertIsNone(world.approvals.plan_for(case, lead, (OID,)), "and what Meternaut is made of is asked about by nobody, so no request carries the reason")
 
 
 def self_key(plan):

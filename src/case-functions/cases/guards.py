@@ -13,7 +13,7 @@ MANAGED_PREFIXES = ("mc_", "databricks-rg-", "networkwatcherrg", "defaultresourc
                     "loganalyticsdefaultresources", "ma_", "synapseworkspace-managedrg-")
 
 # flag name in the prompt, name in the History
-NAMES = (("locked", "locked"), ("keepTag", "keep-tag"), ("tooNew", "too-new"), ("managedGroup", "managed-group"), ("unverified", "unverified"))
+NAMES = (("locked", "locked"), ("keepTag", "keep-tag"), ("tooNew", "too-new"), ("managedGroup", "managed-group"), ("unverified", "unverified"), ("ownPart", "own-part"))
 
 
 @dataclass(frozen=True)
@@ -38,11 +38,13 @@ def is_locked(resource_id: str, scopes: list[str]) -> bool:
     return any(target == scope or target.startswith(scope + "/") for scope in scopes)
 
 
-def evaluate(lead: Lead, context: Context, scope_locks: list[str] | None, fixture: bool = False) -> Guards:
+def evaluate(lead: Lead, context: Context, scope_locks: list[str] | None, fixture: bool = False, own: bool = False) -> Guards:
     """A guard that cannot be read is a guard that is on: "unverified" stops a lead as much as a lock does.
 
     `scope_locks` are the locks that the list of the lead's own scopes returned; None means that they could not be read.
     `fixture` is a resource that Meternaut planted itself in the group where a change may be made: it is not held back for being new, and no other guard is lifted.
+    `own` is a part of Meternaut itself (approvals.is_own_part): it is held back whatever else is true of it, and nobody is asked about it. The flag exists only when it is on, so that what the
+    two roles are shown of every other resource is what it was.
     """
     target = lead.resource_id.lower()
     unverified = context.locks is None or context.recent is None or context.managed_groups is None or scope_locks is None
@@ -50,4 +52,4 @@ def evaluate(lead: Lead, context: Context, scope_locks: list[str] | None, fixtur
     too_new = not fixture and ((lead.age_days is not None and lead.age_days < RECENT_DAYS) or (context.recent is not None and target in context.recent))
     group = lead.resource_group.lower()
     managed = bool(lead.managed_by) or group.startswith(MANAGED_PREFIXES) or (context.managed_groups is not None and group in context.managed_groups)
-    return Guards({"locked": locked, "keepTag": keep_tag(lead.tags), "tooNew": too_new, "managedGroup": managed, "unverified": unverified})
+    return Guards({"locked": locked, "keepTag": keep_tag(lead.tags), "tooNew": too_new, "managedGroup": managed, "unverified": unverified, **({"ownPart": True} if own else {})})

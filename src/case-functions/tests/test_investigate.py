@@ -1965,6 +1965,20 @@ class WhatTheGuardsHold(unittest.TestCase):
         self.assertEqual(self.run_with(resources=[place(1), place(2)], context=both_new, with_store=True).result.guarded, 0)
         self.assertEqual(self.run_with(resources=[place(1), place(2)], context=both_new, with_store=False).result.guarded, 2, "without the loop nothing is a fixture")
 
+    def test_a_part_of_meternaut_itself_is_held_back_as_an_own_part_and_what_it_planted_and_what_is_elsewhere_is_not(self):
+        """The finding of 2026-11-27: the investigation asked about the AI account of Meternaut itself, which is in the group that the app is deployed in."""
+        planted = resource(1, resource_id=f"{RG}/{GROUP}/providers/Microsoft.Compute/disks/planted-disk-1", resource_type="microsoft.compute/disks", name="planted-disk-1", resource_group=GROUP,
+                           tags={"meternaut-planted": "demo"})
+        account = resource(2, resource_id=f"{RG}/{GROUP}/providers/Microsoft.CognitiveServices/accounts/aif-agents-2", resource_type="microsoft.cognitiveservices/accounts", name="aif-agents-2",
+                           resource_group=GROUP)
+        elsewhere = resource(3)  # in rg-app, which is not a group of Meternaut's own
+        h = self.run_with(resources=[planted, account, elsewhere], handles=("r1", "r2", "r3"), with_store=True)
+        self.assertEqual(sorted(r["resourceName"] for r in h.of("case.result")), ["planted-disk-1", "thing-3"], "no case for the account")
+        self.assertEqual((h.result.guarded, h.result.cases), (1, 2))
+        self.assertIn("the investigation held back 1 resource with a guard: 1 own-part", h.notes)
+        h = self.run_with(resources=[account], handles=("r2",), with_store=False)
+        self.assertEqual((h.result.guarded, h.result.cases), (0, 1), "without the loop the app knows no group of its own")
+
 
 # -- the cases in the store --------------------------------------------------------------------------------------------------------------------------
 

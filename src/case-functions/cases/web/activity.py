@@ -37,7 +37,7 @@ VERDICTS = {"agree": "Agrees", "disagree": "Disagrees", "unsure": "Is not sure"}
 # `automation` is what the runs before that said of such a resource, which they held back: the records of those runs are shown as they were.
 FATES = {"request": "a request was made", "person": "left for a person, no request yet", "dropped": "dropped, no change is suggested", "nothing": "held back, nothing to say",
          "automation": "held back, managed by an automation", "managed": "a request was made; an automation manages the resource", "unchecked": "held back, not checked who changed it",
-         "impact": "held back, impact not checked"}
+         "impact": "held back, impact not checked", "own": "held back, one of Meternaut's own parts"}
 LEFT = {"unknown": "that no tool showed", "unproven": "with no measurement that proves it", "repeated": "that an earlier finding has", "guarded": "held back by a guard",
         "recent": "judged lately", "capped": "beyond the cap of one run", "small": "in a finding that together costs too little to open a case"}
 

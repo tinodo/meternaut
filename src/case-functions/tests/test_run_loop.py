@@ -122,17 +122,19 @@ class WhatTheLoopKeeps(unittest.TestCase):
 
     def test_a_disk_that_is_not_planted_is_shown_with_its_age_and_without_the_fact(self):
         estate = estate_with(planted_disk=False)
-        row = disk_row("young-disk", GROUP, timeCreated=stamp(NOW))
+        row = disk_row("planted-disk-2", GROUP, timeCreated=stamp(NOW))  # named as the planting names its waste, without the tag
         estate.graph["orphan-managed-disk"] = [row]
         estate.graph["recent-creations"] = [{"targetId": row["id"].lower()}]
         watch(estate, self.extras, self.clock)
-        for prompt in estate.prompts():
+        prompts = estate.prompts()
+        self.assertEqual(len(prompts), 2, "the Detective and the Skeptic")
+        for prompt in prompts:
             case = json.loads(prompt)["case"]
             self.assertEqual((case["facts"]["ageDays"], "planted" in case["facts"], case["flags"]["tooNew"]), (0, False, True))
 
     def test_the_same_disk_without_the_tag_is_held_back_and_gets_no_change_only_advice(self):
         estate = estate_with(planted_disk=False)
-        row = disk_row("young-disk", GROUP, timeCreated=stamp(NOW))
+        row = disk_row("planted-disk-2", GROUP, timeCreated=stamp(NOW))
         estate.graph["orphan-managed-disk"] = [row]
         estate.graph["recent-creations"] = [{"targetId": row["id"].lower()}]
         watch(estate, self.extras, self.clock)
@@ -151,11 +153,21 @@ class WhatTheLoopKeeps(unittest.TestCase):
         self.assertEqual((case.status, case.guards), ("needs_human", ("too-new",)))
 
     def test_a_proposed_case_that_may_not_be_changed_gets_advice_and_not_a_plan_of_a_change(self):
-        watch(estate_with(planted_disk=False, endpoints=1, group=GROUP), self.extras, self.clock)  # in the group where a change may be made, but without the planting tag
+        estate = estate_with(planted_disk=False)
+        estate.graph["orphan-managed-disk"] = [disk_row("planted-disk-2", GROUP, timeCreated="2026-10-01T10:00:00.0000000+00:00")]  # in the group where a change may be made, named as the planting names its waste, but without the tag
+        watch(estate, self.extras, self.clock)
         (case,) = self.store.cases_recent()
         (plan,) = self.store.plans_open()
         self.assertEqual((case.status, case.recommendation, case.plan_id), ("proposed", "delete", plan.plan_id))
         self.assertEqual((plan.family, plan.case_id), ("advise", case.case_id))
+
+    def test_a_part_of_meternaut_itself_is_left_alone_judged_by_no_model_and_asked_about_by_nobody(self):
+        estate = estate_with(planted_disk=False, endpoints=1, group=GROUP)  # a private endpoint in the group that the app is deployed in, that nobody planted
+        estate.graph["orphan-managed-disk"] = [disk_row("some-disk", GROUP, timeCreated="2026-10-01T10:00:00.0000000+00:00")]
+        summary, events, _ = watch(estate, self.extras, self.clock)
+        self.assertEqual((self.store.cases_recent(), self.store.plans_open(), self.store.plans_held(), estate.prompts()), ([], [], [], []), "no case, no request, no call of a model")
+        self.assertEqual(summary.leads, 2)
+        self.assertIn("2 leads about Meternaut's own parts were left alone: nobody is asked about what Meternaut is made of", [e["note"] for e in events if e["type"] == "run.note"])
 
     def test_a_lock_still_stops_a_planted_disk(self):
         estate = estate_with()

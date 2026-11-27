@@ -13,7 +13,7 @@ from test_web_support import make_advice, make_advice_case, make_decision, page_
 
 from cases import brief, learning
 from cases.advisor import ADVICE_NONE
-from cases.approvals import ASKED_UNDER, ASKING_RULES, NO_FIGURE, NOTHING_TO_SAY, RULES_CHANGED, UNCONFIRMED, UNMEASURED, why_not_ask
+from cases.approvals import ASKED_UNDER, ASKING_RULES, NO_FIGURE, NOTHING_TO_SAY, OWN_PART, RULES_CHANGED, UNCONFIRMED, UNMEASURED, why_not_ask
 from cases.decide import NO_MEASUREMENT
 
 SUBSCRIPTION_ID = f"/subscriptions/{SUBSCRIPTION}"
@@ -360,13 +360,19 @@ class AnOpenRequestForAFindingThatNoSavingBacksIsTakenBack(unittest.TestCase):
         summary, events, _ = self.watch()
         self.assertEqual((self.store.plan_get(self.plan.plan_id).state, summary.held, [e for e in events if e["type"] == "case.held"]), ("open", 0, []))
 
-    def test_a_request_about_something_in_a_group_of_meternauts_own_is_left_alone_and_the_same_request_outside_it_is_taken_back(self):
+    def test_a_request_about_a_part_of_meternaut_itself_is_taken_back_for_that_and_the_same_request_outside_its_group_is_taken_back_for_the_rules(self):
+        """A request that an earlier Watch made about the AI account in the group that the app is deployed in stayed open for weeks, because that group was left alone by every rule (2026-11-27)."""
         mine = unpriced(case_id="kmine1", plan_id="pmine1", resource_group=GROUP, resource_name="contoso-mine")
         self.store.case_put(mine)
         self.store.plan_put(request_for(mine, title=f"Check whether the account contoso-mine in group {GROUP} is still used", created_at="2026-11-01T09:00:00Z", expires_at=""))
         summary, events, _ = self.watch()
-        self.assertEqual((self.store.plan_get("pmine1").state, [e for e in events if e["type"] == "case.held" and e["caseId"] == mine.case_id]), ("open", []))
-        self.assertEqual((self.store.plan_get(self.plan.plan_id).state, summary.held), ("expired", 1))
+        taken, outside = self.store.plan_get("pmine1"), self.store.plan_get(self.plan.plan_id)
+        self.assertEqual((taken.state, taken.preconditions["takenBack"], outside.state, outside.preconditions["takenBack"], summary.held), ("expired", "own", "expired", "rules", 2))
+        (held,) = [e for e in events if e["type"] == "case.held" and e["caseId"] == mine.case_id]
+        self.assertEqual(held["reason"], OWN_PART)
+        self.assertEqual(brief.taken_back_words(taken, "own"), brief.TAKEN_BACK["own"])
+        self.assertEqual(self.store.plans_open(), [], "nothing is asked about it again, and no held request shows it")
+        self.assertEqual(self.store.plans_held(), [])
 
     def test_a_request_that_the_old_clock_closed_and_that_comes_back_is_taken_back_in_the_same_watch_and_never_chased(self):
         closed = request_for(self.case, state="expired", created_at="2026-10-26T12:00:00Z", expires_at="2026-10-29T12:00:00Z")
@@ -505,15 +511,16 @@ class AnOpenRequestForAFindingThatNothingMeasuredOrThatNobodyConfirmedIsTakenBac
                 summary, events, _ = self.watch()
                 self.assertEqual((self.store.plan_get(plan.plan_id).state, summary.held), (state, int(state == "expired")))
 
-    def test_a_request_about_something_in_a_group_of_meternauts_own_is_left_alone_and_the_same_request_outside_it_is_taken_back(self):
+    def test_a_request_about_a_part_of_meternaut_itself_is_taken_back_for_that_and_the_same_request_outside_its_group_for_the_rules(self):
         for reason in self.each():
             _, outside = self.made(reason)
             mine = unasked(reason, case_id="kmine", plan_id="pmine", resource_group=GROUP, resource_name="contoso-mine")
             self.store.case_put(mine)
             self.store.plan_put(request_for(mine, title=f"Check whether the account contoso-mine in group {GROUP} is still used", saving_usd_month=40.0, created_at="2026-11-01T09:00:00Z", expires_at=""))
             summary, events, _ = self.watch()
-            self.assertEqual((self.store.plan_get("pmine").state, [e for e in events if e["type"] == "case.held" and e["caseId"] == mine.case_id]), ("open", []))
-            self.assertEqual((self.store.plan_get(outside.plan_id).state, summary.held), ("expired", 1))
+            taken, kept = self.store.plan_get("pmine"), self.store.plan_get(outside.plan_id)
+            self.assertEqual((taken.state, taken.preconditions["takenBack"], kept.state, kept.preconditions["takenBack"], summary.held), ("expired", "own", "expired", "rules", 2))
+            self.assertEqual([e["reason"] for e in events if e["type"] == "case.held" and e["caseId"] == mine.case_id], [OWN_PART])
 
     def test_a_request_that_the_old_clock_closed_and_that_comes_back_is_taken_back_in_the_same_watch(self):
         for reason in self.each():

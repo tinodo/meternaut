@@ -19,7 +19,7 @@ from .families import digest as plan_digest
 from .families import registry
 from .families.azure import Azure
 from .families.base import Env, Family, Stop, Unreadable
-from .families.gates import ChangeScope, Gates
+from .families.gates import ChangeScope, Gates, on_planted_list
 from .families.setting import Cannot, ChangeSetting
 from .memory_store import parse, stamp, utc_now
 from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, COST_AT_ASK, COST_OF, COST_SEEN, COST_SPREAD, DECLINE_REASONS, GROUP_FACT, HELD, INVESTIGATION,
@@ -50,7 +50,9 @@ NOT_CHECKED = "held back: not checked who changed it"
 IMPACT_NOT_CHECKED = "held back: impact not checked"
 # And of an open request that was made when a deletion could be asked on less than the rules ask for now: it is taken back when nobody has answered it.
 RULES_CHANGED = "held back: Meternaut's rules changed"
-HELD_BACK = {"automation": MANAGED_BY_AUTOMATION, "unchecked": NOT_CHECKED, "impact": IMPACT_NOT_CHECKED, "rules": RULES_CHANGED}  # the reason of cases/brief.py held_reason (and `rules`) -> the words of the History
+# And of a finding about a part of Meternaut itself: a resource in a group of Meternaut's own that Meternaut did not plant (own_part). Nobody is asked about what Meternaut is made of.
+OWN_PART = "held back: it is one of Meternaut's own parts"
+HELD_BACK = {"automation": MANAGED_BY_AUTOMATION, "unchecked": NOT_CHECKED, "impact": IMPACT_NOT_CHECKED, "rules": RULES_CHANGED, "own": OWN_PART}  # the reason of cases/brief.py held_reason (and `rules`, `own`) -> the words of the History
 # What the History says when a finding that a guard held back is held no longer (cases/upkeep.py released), and the words of each reason that it was held for.
 RELEASED = "no longer held back"
 LEFT_ALONE = "closed: a person marked it do-not-touch"
@@ -91,6 +93,13 @@ def is_fixture(lead: Lead, settings: ApprovalSettings) -> bool:
     not held back for being new."""
     gates = settings.gates
     return gates.why_outside(lead.subscription_id, lead.resource_group) is None and gates.why_not_planted(lead.tags, lead.resource_type, lead.name) is None
+
+
+def is_own_part(lead: Lead, settings: ApprovalSettings) -> bool:
+    """A resource of Meternaut itself: it is in a group of Meternaut's own (the group that the app is deployed in) and is not named as the planting names its waste. Such a group holds two things, the
+    waste that Meternaut planted to prove its loop on and what Meternaut is made of: its AI account, its gateway, its app, its storage and its logs. Nobody is asked about the second. The tag of the
+    planted waste is not asked for here: a disk named as the planting names it is asked about as before, and only a change needs its tag (gates.py)."""
+    return settings.gates.why_outside(lead.subscription_id, lead.resource_group) is None and not on_planted_list(lead.resource_type, lead.name)
 
 
 def why_not(case: CaseRecord, lead: Lead, settings: ApprovalSettings, store: Store, family: Family | None = None, replacing: str = "") -> str | None:
@@ -154,8 +163,13 @@ def build_plan(case: CaseRecord, lead: Lead, approvers: tuple[str, ...], now: dt
 
 
 def own_group(case: CaseRecord, settings: ApprovalSettings) -> bool:
-    """Whether the case is about something in a group of Meternaut's own where a change may be made: the waste that it planted lives there, and the rules about asking leave it alone."""
+    """Whether the case is about something in a group of Meternaut's own where a change may be made: the waste that it planted lives there, and so does what it is made of (own_part)."""
     return settings.gates.why_outside(case.subscription_id, case.resource_group) is None
+
+
+def own_part(case: CaseRecord, settings: ApprovalSettings) -> bool:
+    """Whether the case is about a part of Meternaut itself: something in a group of its own that is not named as the planting names its waste (is_own_part, which a lead is asked)."""
+    return own_group(case, settings) and not on_planted_list(case.resource_type, case.resource_name)
 
 
 def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime, settings: ApprovalSettings, new_id: Callable[[], str] = lambda: uuid.uuid4().hex, held: str = "",
@@ -537,8 +551,11 @@ class Approvals:
         return own_group(case, self.settings)
 
     def held_why(self, case: CaseRecord) -> str:
-        """Why no request is made for a case (cases/brief.py held_reason), whichever detector or AI made it, or "" when none is held. The one place that every path to an advise plan passes."""
-        return "" if self._own_group(case) else brief.held_reason(case, self.clock())
+        """Why no request is made for a case (cases/brief.py held_reason), whichever detector or AI made it, or "" when none is held. The one place that every path to an advise plan passes. A part of
+        Meternaut itself is held for `own`, whatever else is true of it; the waste that Meternaut planted in its own group is held by no guard."""
+        if self._own_group(case):
+            return "own" if own_part(case, self.settings) else ""
+        return brief.held_reason(case, self.clock())
 
     def hold_back_empty(self) -> list[tuple[PlanRecord, CaseRecord]]:
         """Takes back the open advice requests of the findings that cannot say what to look at (brief.says_nothing), that the rules of today hold back (held_why), that were made when a deletion
@@ -677,6 +694,8 @@ class Approvals:
                     how = "released"
                 elif case.resource_id.lower() in silenced:
                     how = "left-alone"
+                elif self.held_why(case) == "own":
+                    how = "released"  # a part of Meternaut itself is shown to nobody, not even as a finding that a guard holds back
                 else:
                     why = self._guard(case)
                     if not why and _was_managed(plan):
@@ -719,6 +738,8 @@ class Approvals:
                             or why_not_ask(case) is not None):
                         continue
                     why = self._guard(case)
+                    if why == "own":
+                        continue  # a part of Meternaut itself: nobody is shown it, not even as a finding that a guard holds back
                     if not why and case.plan_id:
                         before = self.store.plan_get(case.plan_id)
                         why = "rules" if brief.taken_back(before) == "rules" else ""

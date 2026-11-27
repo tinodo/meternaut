@@ -98,3 +98,22 @@ The second Watch promotes five more, so a person with ten requests is written to
 - A finding that an automation manages and that the AIs did not settle waits for a place when 30 requests are open and it is worth no more than the least of them. It is shown as held ("Waiting for a free place", with its figure) and asked about when a place is free, in the order of the pages. The cap compares the stated saving: a finding with no saving is worth nothing to it, whatever it costs, so it waits behind priced ones; and more than 30 requests can be open, because a finding that is worth more than the smallest of them gets its request.
 - The count of ten that the first run showed is replaced by 30 on a measurement of 14 days (92 requests made, 12 closed by the clock and now opened again), not on how people answer: whether 30 open requests are too many for one person is not proved.
 - It has not run against the real store or the function app. The real held requests were not replayed; whether five of them are promoted, one letter and three cards go out and the people answer is not tried. "N days ago" is as old as the last judgment's reading of the Activity Log. The person who looks after an automation is often not on the list of people ([rule 15 (g)](../../AGENTS.md)).
+
+## 2026-11-27: nobody is asked about what Meternaut is made of
+
+**Decided on 2026-11-27** by the orchestrator, after the owner opened a request that asked him to check whether the AI account of Meternaut itself was still used, and asked: "Meternaut suggests to delete meternaut?". Built and tested against fakes. It changes nothing in Azure ([rule 29](../../AGENTS.md)).
+
+**Why.** The request was two weeks old, had low confidence and named no saving, and the rules of asking would have refused it today. It stayed because the group that the app is deployed in (`CHANGE_SCOPES`) was left alone by every rule: the rules of asking, the guards, and the taking back of a request whose rules had changed. That exemption was meant for the waste that Meternaut plants there to prove its loop on. But the same group holds what Meternaut is made of: its AI account, its gateway, its app, its storage and its logs. The account looked idle on the day, and the calls on its chart were Meternaut's own runs.
+
+**What changed.**
+
+- A resource in a group of Meternaut's own that is not named as the planting names its waste (`planted-disk-…`, `planted-ip-…`, `planted-vm-…`, `planted-nic-…`, the kinds on the planted list of `gates.py`) is a part of Meternaut itself: `approvals.is_own_part` for a lead, `approvals.own_part` for a case. No list of the names of Meternaut's parts is kept, and the rule names no kind of resource.
+- Nobody is asked about it, by any path. `Approvals.held_why`, which every path to a request passes, answers `own`. The investigation holds such a resource back with a guard (`own-part`) before a case is made, and the older detectors do not judge it (no model is called): the Watch says how many leads it left alone.
+- A request that is open for a part of Meternaut is taken back at the next Watch with the reason `own` ("Meternaut took this request back, because the resource is one of Meternaut's own parts. Meternaut does not ask about itself."), unless a person answered it, as for every reason. `Approvals.settle` makes no held request for it and closes one that exists, so no page shows it as a held finding either. The History says "held back: it is one of Meternaut's own parts".
+- What Meternaut planted is asked about as before, tag or no tag: the tag decides only whether a change may be made (the gates), not whether a person is asked.
+
+**What is not proved.**
+
+- It has not run against the real store. The open request about the AI account is taken back at the next Watch after the deploy, and only if nobody answered it: an answer of a person is never taken back.
+- A part of Meternaut that is not in the group that the app is deployed in is not covered (the template puts everything of the app in that one group).
+- A resource of the group that someone else put there is treated as a part of Meternaut. The group is Meternaut's own, and the rule cannot tell the difference.

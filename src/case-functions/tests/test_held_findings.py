@@ -465,7 +465,7 @@ class AGuardThatEndsIsJudgedAgainByTheNormalPath(Base):
 class TheHistoryWordsStayAsTheyAre(Base):
     def test_the_words_of_the_guards_and_the_new_word_and_the_kind_of_line(self):
         self.assertEqual(HELD_BACK, {"automation": "held back: managed by an automation", "unchecked": "held back: not checked who changed it", "impact": "held back: impact not checked",
-                                     "rules": "held back: Meternaut's rules changed"})
+                                     "rules": "held back: Meternaut's rules changed", "own": "held back: it is one of Meternaut's own parts"})
         self.assertEqual(NOTHING_TO_SAY, "held back: nothing to say")
         self.assertIn("case.released", events.LOOP_KINDS)
 
